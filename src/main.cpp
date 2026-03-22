@@ -7,6 +7,7 @@
 
 struct Position {
     Vector2 pos;
+
 };
 
 struct Health {
@@ -36,7 +37,7 @@ int main() {
     manager.setComponent<Position>(hunter, positionComp);
 
     AnimationStateComponent stateComp = {
-        .currentFrame = 0, .currentState = AnimationStateComponent::State::Idle, .stateTimer = 0};
+        .currentState = AnimationStateComponent::State::Idle, .currentFrame = 0, .stateTimer = 0};
     manager.setComponent<AnimationStateComponent>(hunter, stateComp);
 
     Health healthComp = {.health = 100.f};

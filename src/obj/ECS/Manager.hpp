@@ -8,6 +8,7 @@
 #include <tuple>
 #include <type_traits>
 #include <unordered_map>
+#include <cstring>
 
 #include "Archetype.hpp"
 #include "Component.hpp"

@@ -10,29 +10,27 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 
 # 1. Change default build type to Release (Debug disables optimizations!)
+# Note: This affects single-config generators like Make/Ninja, but is ignored by MSVC.
 if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
 endif()
 
 add_executable(${PROJECT_NAME} ${SOURCES} ${HEADERS})
 
-# 2. Explicitly add -O3 optimizations based on the compiler
+# 2. Explicitly add optimizations based on the compiler
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(${PROJECT_NAME} PRIVATE 
         -O3
         -march=native     # Target the specific CPU of the machine building the code
         -ffast-math       # Breaks some IEEE standards for 2x speed in physics
-        -flto             # Link time optimization
         -funroll-loops    # Aggressive loop unrolling
         -fomit-frame-pointer 
         -fstrict-aliasing
-        -Rpass=loop-vectorize # Keep this to see optimization reports
+        
     )
-    # Ensure the linker also uses LTO
-    target_link_options(${PROJECT_NAME} PRIVATE -flto)
-elseif(MSVC)
-    target_compile_options(${PROJECT_NAME} PRIVATE /O2) # MSVC equivalent of -O3
 endif()
+
+# This tells CMake to handle LTO automatically for ALL compilers (replaces manual -flto)
 set_target_properties(${PROJECT_NAME} PROPERTIES INTERPROCEDURAL_OPTIMIZATION TRUE)
 
 set(BASE_ASSET_DIR "${CMAKE_SOURCE_DIR}/assets")
