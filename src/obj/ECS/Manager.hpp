@@ -70,6 +70,80 @@ struct Manager {
         return newId;
     }
 
+    void destroyEntity(EntityId entity) {
+
+        // 1. Check if the entity actually exists
+        auto it = entity_index.find(entity);
+        if (it == entity_index.end()) {
+            return; // Entity doesn't exist, do nothing
+        }
+
+        Record record = it->second;
+
+        // 2. If the entity has components, it lives inside an Archetype.
+        // We must do a "Swap and Pop" to remove it without leaving a memory hole.
+        if (record.archetype != nullptr) {
+            Archetype *arch = record.archetype;
+            size_t rowToDelete = record.row;
+            size_t lastRow = arch->entities.size() - 1;
+
+            // 3. If the entity is NOT already the last one, we must move the last one to fill the
+            // gap.
+            if (rowToDelete != lastRow) {
+                // Identify who is sitting at the very end of the arrays
+                EntityId entityToMove = arch->entities[lastRow];
+
+                // A. Move the Entity ID
+                arch->entities[rowToDelete] = entityToMove;
+
+                // B. Update the moved entity's record in the global index!
+                // It no longer lives at 'lastRow', it now lives at 'rowToDelete'.
+                entity_index[entityToMove].row = rowToDelete;
+
+                // C. Move the raw component data
+                // Because your components are std::vector<std::byte>, we must do a memory copy.
+                // (Note: You will need a way to know WHICH ComponentId corresponds to
+                // which index 'i' in the components array to look up its size).
+                for (size_t i = 0; i < arch->components.size(); ++i) {
+
+                    // TODO: Retrieve the actual ComponentId for this specific array index 'i'
+                    // ComponentId compId = arch->getComponentIdForIndex(i);
+                    // size_t compSize = component_size[compId];
+
+                    // Placeholder for compilation, replace with your actual size lookup:
+                    size_t compSize = 0;
+
+                    if (compSize > 0) {
+                        auto &compArray = arch->components[i];
+
+                        // Copy the bytes from the last row over the row being deleted
+                        std::memcpy(&compArray[rowToDelete * compSize],
+                                    &compArray[lastRow * compSize],
+                                    compSize);
+                    }
+                }
+            }
+
+            // 4. The data has been swapped (or the entity was already the last one).
+            // Now we just pop the duplicate data off the back!
+            arch->entities.pop_back();
+
+            for (size_t i = 0; i < arch->components.size(); ++i) {
+                // size_t compSize = component_size[ arch->getComponentIdForIndex(i) ];
+                size_t compSize = 0; // Placeholder
+
+                if (compSize > 0) {
+                    auto &compArray = arch->components[i];
+                    // Shrink the byte array by exactly one component's size
+                    compArray.resize(compArray.size() - compSize);
+                }
+            }
+        }
+
+        // 5. Finally, wipe the entity out of the master index
+        entity_index.erase(it);
+    }
+
     template <typename T> T *getComponent(EntityId entity) {
         if constexpr (std::is_empty_v<T>)
             return nullptr;
@@ -148,7 +222,6 @@ struct Manager {
         size_t newRow = nextArchtype->entities.size();
         nextArchtype->entities.push_back(entity);
 
-        // FIX: Only resize valid columns
         for (ComponentId cid : nextArchtype->typeSet) {
             size_t compSize = component_size[cid];
             if (compSize > 0) {
@@ -160,7 +233,6 @@ struct Manager {
         if (currentArchtype != nullptr) {
             size_t oldRow = record.row;
 
-            // FIX: Copy old data using explicit column lookups
             for (ComponentId cid : currentArchtype->typeSet) {
                 size_t compSize = component_size[cid];
                 if (compSize == 0)
@@ -178,7 +250,6 @@ struct Manager {
             EntityId lastEntity = currentArchtype->entities.back();
 
             if (oldRow != lastRow) {
-                // FIX: Swap and Pop using column lookups
                 for (ComponentId cid : currentArchtype->typeSet) {
                     size_t compSize = component_size[cid];
                     if (compSize == 0)
@@ -194,7 +265,6 @@ struct Manager {
                 currentArchtype->entities[oldRow] = lastEntity;
             }
 
-            // FIX: Shrink vectors using column lookups
             for (ComponentId cid : currentArchtype->typeSet) {
                 size_t compSize = component_size[cid];
                 if (compSize == 0)
@@ -262,7 +332,6 @@ struct Manager {
         size_t newRow = nextArchtype->entities.size();
         nextArchtype->entities.push_back(entity);
 
-        // FIX: resize valid columns
         for (ComponentId cid : nextArchtype->typeSet) {
             size_t compSize = component_size[cid];
             if (compSize > 0) {

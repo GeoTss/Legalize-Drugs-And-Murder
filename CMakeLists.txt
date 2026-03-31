@@ -30,6 +30,12 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     )
     # Ensure the linker also uses LTO
     target_link_options(${PROJECT_NAME} PRIVATE -flto)
+
+    # Tell the linker where to find Homebrew's libc++
+    target_link_directories(texnologia-polymeswn PRIVATE /opt/homebrew/opt/llvm/lib/c++)
+
+    # Tell the final executable to load this specific library at runtime (rpath)
+    target_link_options(texnologia-polymeswn PRIVATE -Wl,-rpath,/opt/homebrew/opt/llvm/lib/c++)
 elseif(MSVC)
     target_compile_options(${PROJECT_NAME} PRIVATE /O2) # MSVC equivalent of -O3
 endif()
