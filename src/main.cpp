@@ -108,29 +108,53 @@ int main() {
     manager.addComponent<AnimationStateComponent>(hunter, &animationComponent);
 
     while (!WindowShouldClose()) {
+        float dt = GetFrameTime();
+
+        auto nowTime = std::chrono::steady_clock::now();
+
         BeginDrawing();
         ClearBackground(BLACK);
 
-        AnimationSystem::update(manager, spriteManager, eventDispatcher, GetFrameTime());
+        AnimationSystem::update(manager, spriteManager, eventDispatcher, dt, nowTime);
 
+        EndDrawing();
+        
         updateEvents<HunterLightAttackEventTag>(manager, [](Manager& manager, const EntityId eventEntity){
             auto eventInfo = manager.getComponent<AnimationEventComponent>(eventEntity);
             EntityId entity = eventInfo->sourceEntity;
 
             auto transformComp = manager.getComponent<TransformComponent>(entity);
             
-            DrawRectangleLines(transformComp->pos.x, transformComp->pos.y, 90, 20, YELLOW);
+            // DrawRectangleLines(transformComp->pos.x, transformComp->pos.y, 90, 20, YELLOW);
+
+            auto hitboxEntity = manager.addEntity();
+            HitboxComponent hitboxComp = {
+                .srcEntity = eventEntity,
+                .x = transformComp->pos.x,
+                .y = transformComp->pos.y,
+                .width = 90,
+                .height = 20
+            };
+
+            manager.addComponents<HitboxComponent, DamageEnemiesTag>(hitboxEntity);
+
+            manager.setComponent<HitboxComponent>(hitboxEntity, hitboxComp);
         });
 
-        EndDrawing();
 
-        std::vector<EntityId> eventsToDestroy;
+        std::vector<EntityId> entitiesToDestroy;
+
+        auto hitboxView = manager.view<HitboxComponent>();
+        for(auto hitbox: hitboxView){
+            entitiesToDestroy.push_back(hitbox);
+        }
+
         auto eventView = manager.view<AnimationEventComponent>();
-        for (auto entity : eventView) {
-            eventsToDestroy.push_back(entity);
+        for (auto event : eventView) {
+            entitiesToDestroy.push_back(event);
         }
         
-        for (auto entity : eventsToDestroy) {
+        for (auto entity : entitiesToDestroy) {
             manager.destroyEntity(entity);
         }
     }

@@ -5,6 +5,7 @@
 #include <stdint.h>
 
 #include "unique_counter.hpp"
+#include "Entity.hpp"
 
 using ComponentId = uint16_t;
 
@@ -14,6 +15,7 @@ template <typename T> struct ComponentID {
 
 struct TransformComponent {
     Vector2 pos;
+    Vector2 velocity;
     int8_t facingDirection;
 };
 
@@ -24,6 +26,23 @@ struct HealthComponent {
 struct NothingEffectTag {};
 struct PoisonEffectTag {};
 
-struct HunterLightAttackEventTag{};
+struct AnimationEventComponent {
+    EntityId sourceEntity;
+    std::chrono::steady_clock::time_point startPoint;
+    std::chrono::milliseconds duration;
+};
+
+struct HitboxComponent {
+    EntityId srcEntity;
+    float x;
+    float y;
+    float width;
+    float height;
+};
+
+struct DamageEnemiesTag {};
+struct DamageCharacterTag {};
+
+struct HunterLightAttackEventTag {};
 
 #endif

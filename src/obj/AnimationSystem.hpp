@@ -30,13 +30,11 @@ struct AnimationStateComponent {
     float stateTimer = 0.f;
 };
 
-struct AnimationEventComponent {
-    EntityId sourceEntity;
-};
+using namespace std::chrono_literals;
 
 struct AnimationSystem {
     static void
-    update(Manager &manager, SpriteManager &spriteManager, EventDispatcher &dispatcher, float dt) {
+    update(Manager &manager, SpriteManager &spriteManager, EventDispatcher &dispatcher, float dt, std::chrono::steady_clock::time_point nowTime) {
         auto view = manager.view<TransformComponent, AnimationStateComponent>();
 
         for (auto entity : view) {
@@ -71,10 +69,13 @@ struct AnimationSystem {
 
                     auto eventEntityId = manager.addEntity();
 
-                    AnimationEventComponent eventComp = {.sourceEntity = entity};
-                    manager.addComponent<AnimationEventComponent>(eventEntityId, &eventComp);
+                    // AnimationEventComponent eventComp = {
+                    //     .sourceEntity = entity,
+                    //     .startPoint = nowTime,
+                    //     .duration = 100ms};
+                    // manager.addComponent<AnimationEventComponent>(eventEntityId, &eventComp);
 
-                    dispatcher.dispatchConstruction(manager, eventEntityId, eventId);
+                    dispatcher.dispatchConstruction(manager, eventEntityId, eventId, nowTime, 100ms);
                 }
             }
 
@@ -91,17 +92,12 @@ struct AnimationSystem {
                 sourceRec.width *= -1;
             }
 
-            Rectangle destRec = {
-                transform.pos.x, 
-                transform.pos.y,
-                (float)track.frameWidth,
-                (float)track.frameHeight
-            };
+            Rectangle destRec = {transform.pos.x,
+                                 transform.pos.y,
+                                 (float)track.frameWidth,
+                                 (float)track.frameHeight};
 
-            Vector2 origin = { 
-                (float)track.frameWidth / 2.0f, 
-                (float)track.frameHeight / 2.0f 
-            };
+            Vector2 origin = {(float)track.frameWidth / 2.0f, (float)track.frameHeight / 2.0f};
 
             DrawTexturePro(track.texture, sourceRec, destRec, origin, 0.0f, WHITE);
         }
