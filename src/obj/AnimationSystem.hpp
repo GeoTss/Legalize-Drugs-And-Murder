@@ -34,7 +34,7 @@ using namespace std::chrono_literals;
 
 struct AnimationSystem {
     static void
-    update(Manager &manager, SpriteManager &spriteManager, EventDispatcher &dispatcher, float dt, std::chrono::steady_clock::time_point nowTime) {
+    update(Manager &manager, SpriteManager &spriteManager, EventDispatcher &dispatcher, float dt) {
         auto view = manager.view<TransformComponent, AnimationStateComponent>();
 
         for (auto entity : view) {
@@ -50,7 +50,7 @@ struct AnimationSystem {
             anim.stateTimer += dt;
 
             if (anim.stateTimer >= track.frameDuration) {
-                anim.stateTimer -= track.frameDuration;
+                anim.stateTimer = 0;
 
                 anim.currentFrame += 1;
 
@@ -65,17 +65,11 @@ struct AnimationSystem {
             auto eventIter = track.frameEvents.find(anim.currentFrame);
             std::cout << "Dispatching events.\n";
             if (eventIter != track.frameEvents.end() && !eventIter->second.empty()) {
+
                 for (auto eventId : eventIter->second) {
 
                     auto eventEntityId = manager.addEntity();
-
-                    // AnimationEventComponent eventComp = {
-                    //     .sourceEntity = entity,
-                    //     .startPoint = nowTime,
-                    //     .duration = 100ms};
-                    // manager.addComponent<AnimationEventComponent>(eventEntityId, &eventComp);
-
-                    dispatcher.dispatchConstruction(manager, eventEntityId, entity, eventId, nowTime, 100ms);
+                    dispatcher.dispatchConstruction(manager, eventEntityId, entity, eventId);
                 }
             }
 

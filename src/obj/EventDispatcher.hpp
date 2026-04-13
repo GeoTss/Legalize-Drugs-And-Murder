@@ -56,14 +56,14 @@ template <typename... Tags> constexpr uint64_t hashTags() {
 }
 
 struct EventDispatcher {
-    std::unordered_map<uint64_t, std::function<void(Manager &, const EntityId, const EntityId, const std::chrono::steady_clock::time_point&, const std::chrono::milliseconds&)>> eventMap;
+    std::unordered_map<uint64_t, std::function<void(Manager &, const EntityId, const EntityId)>> eventMap;
 
     template <typename... Tags> uint64_t registerEvent() {
         constexpr uint64_t hash = hashTags<Tags...>();
 
-        eventMap[hash] = [](Manager &manager, const EntityId eventEntity, const EntityId srcEntity, const std::chrono::steady_clock::time_point& startPoint, const std::chrono::milliseconds& duration) {
+        eventMap[hash] = [](Manager &manager, const EntityId eventEntity, const EntityId srcEntity) {
             AnimationEventComponent eventComp = {
-                .sourceEntity = srcEntity, .startPoint = startPoint, .duration = duration};
+                .sourceEntity = srcEntity};
             
             manager.addComponent<AnimationEventComponent>(eventEntity, &eventComp);
             manager.addComponents<Tags...>(eventEntity);
@@ -72,10 +72,26 @@ struct EventDispatcher {
         return hash;
     }
 
-    void dispatchConstruction(Manager &manager, const EntityId eventEntity, const EntityId srcEntity, uint64_t hash, const std::chrono::steady_clock::time_point& startPoint, const std::chrono::milliseconds& duration) {
+    template <typename T> 
+    uint64_t registerPayloadEvent(T payloadData) {
+        constexpr uint64_t hash = hashTags<T>();
+        
+        eventMap[hash] = [payloadData](Manager &manager, const EntityId eventEntity, const EntityId srcEntity) {
+            
+            AnimationEventComponent eventComp = { .sourceEntity = srcEntity };
+            manager.addComponent<AnimationEventComponent>(eventEntity, &eventComp);
+            
+            T localData = payloadData;
+            manager.addComponent<T>(eventEntity, &localData);
+        };
+
+        return hash;
+    }
+
+    void dispatchConstruction(Manager &manager, const EntityId eventEntity, const EntityId srcEntity, uint64_t hash) {
         auto it = eventMap.find(hash);
         if (it != eventMap.end())
-            it->second(manager, eventEntity, srcEntity, startPoint, duration);
+            it->second(manager, eventEntity, srcEntity);
     }
 };
 

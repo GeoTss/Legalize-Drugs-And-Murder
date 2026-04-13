@@ -23,11 +23,19 @@ struct HealthComponent {
     float health;
 };
 
+struct StatsComponent{
+    float attackPower;
+    float hitboxScale = 1.0f;
+};
+
 struct NothingEffectTag {};
 struct PoisonEffectTag {};
 
 struct AnimationEventComponent {
     EntityId sourceEntity;
+};
+
+struct LifespanComponent{
     std::chrono::steady_clock::time_point startPoint;
     std::chrono::milliseconds duration;
 };
@@ -38,6 +46,13 @@ struct HitboxComponent {
     float y;
     float width;
     float height;
+    float damage;
+};
+
+struct SpawnHitboxEvent {
+    float width;
+    float height;
+    std::chrono::milliseconds duration;
 };
 
 struct DamageEnemiesTag {};

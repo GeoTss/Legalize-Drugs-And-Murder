@@ -23,26 +23,30 @@ void initializeAnimations(Manager &manager,
     std::unordered_map<uint32_t, std::vector<uint64_t>> lightAttackEvents;
     lightAttackEvents[0] = {};
 
-    auto lightAttackEvent = eventDispatcher.registerEvent<HunterLightAttackEventTag>();
+    SpawnHitboxEvent lightAttackHitbox = {
+        .width = 90,
+        .height = 20,
+        .duration = 300ms
+    };
+
+    auto lightAttackEvent = eventDispatcher.registerPayloadEvent<SpawnHitboxEvent>(lightAttackHitbox);
+    
     lightAttackEvents[0].push_back(lightAttackEvent);
-    // lightAttackEvents[0].push_back((uint64_t)eventIDs::LIGHT_ATTACK);
 
     AnimationTrack lightAttackTrack{
         ASSET_PATH "/Blind-Huntress/10 - attack 1.png", 240, 128, lightAttackEvents, 0.1f, true};
 
     spriteManager.addAnimationTrack(
-        "main", lightAttackTrack, (uint32_t)hunterStates::ATTACKING);
+        "main", std::move(lightAttackTrack), (uint32_t)hunterStates::ATTACKING);
 }
 
 template<typename... EventTags, typename Func>
 void updateEvents(Manager& manager, const Func&& callback){
-    std::cout << "Updating events.\n";
     auto view = manager.view<AnimationEventComponent, EventTags...>();
 
     for(auto entity: view){
         callback(manager, entity);
     }
-    std::cout << "Updating events finished.\n";
 }
 
 int main() {
@@ -96,6 +100,12 @@ int main() {
     hunterHealth = manager.getComponent<HealthComponent>(hunter);
     std::cout << "Hunter's health after removing poison effect: " << hunterHealth->health << "\n";
 
+    StatsComponent stats = {
+        .attackPower = 10.f,
+        .hitboxScale = 1.f
+    };
+    manager.addComponent<StatsComponent>(hunter, &stats);
+
     InitWindow(800, 600, "My ECS Game");
 
     SpriteManager spriteManager{};
@@ -109,6 +119,8 @@ int main() {
 
     manager.addComponent<AnimationStateComponent>(hunter, &animationComponent);
 
+    SetTargetFPS(60);
+
     while (!WindowShouldClose()) {
         float dt = GetFrameTime();
 
@@ -117,31 +129,42 @@ int main() {
         BeginDrawing();
         ClearBackground(BLACK);
 
-        AnimationSystem::update(manager, spriteManager, eventDispatcher, dt, nowTime);
+        AnimationSystem::update(manager, spriteManager, eventDispatcher, dt);
 
         std::cout << "Animations finished.\n";
 
         // EndDrawing();
         
-        updateEvents<HunterLightAttackEventTag>(manager, [](Manager& manager, const EntityId eventEntity){
+        updateEvents<SpawnHitboxEvent>(manager, [&nowTime](Manager& manager, const EntityId eventEntity){
+
             auto eventInfo = manager.getComponent<AnimationEventComponent>(eventEntity);
+            auto hitboxInfo = manager.getComponent<SpawnHitboxEvent>(eventEntity);
+
             EntityId entity = eventInfo->sourceEntity;
 
-            std::cout << "Getting transform component...\n";
             auto transformComp = manager.getComponent<TransformComponent>(entity);
-            std::cout << "Transform component: " << transformComp->pos.x << ", " << transformComp->pos.y << "\n";
-            
+            auto statsComp = manager.getComponent<StatsComponent>(entity);
+
+            float finalWidth = hitboxInfo->width * statsComp->hitboxScale;
+            float finalHeight = hitboxInfo->height * statsComp->hitboxScale;
+
             auto hitboxEntity = manager.addEntity();
             HitboxComponent hitboxComp = {
                 .srcEntity = entity,
                 .x = transformComp->pos.x,
                 .y = transformComp->pos.y,
-                .width = 90,
-                .height = 20
+                .width = finalWidth,
+                .height = finalHeight,
+                .damage = statsComp->attackPower
             };
             
-            // DrawRectangleLines(hitboxComp.x, hitboxComp.y, hitboxComp.width, hitboxComp.height, YELLOW);
-            manager.addComponents<HitboxComponent, DamageEnemiesTag>(hitboxEntity);
+            LifespanComponent lifespanComp = {
+                .startPoint = nowTime,
+                .duration = hitboxInfo->duration
+            };
+
+            manager.addComponents<LifespanComponent, HitboxComponent, DamageEnemiesTag>(hitboxEntity);
+            manager.setComponent<LifespanComponent>(hitboxEntity, lifespanComp);
             manager.setComponent<HitboxComponent>(hitboxEntity, hitboxComp);
         });
 
@@ -156,7 +179,9 @@ int main() {
 
         auto hitboxView = manager.view<HitboxComponent>();
         for(auto hitbox: hitboxView){
-            entitiesToDestroy.push_back(hitbox);
+            auto lifespan = manager.getComponent<LifespanComponent>(hitbox);
+            if((nowTime - lifespan->startPoint) >= lifespan->duration)
+                entitiesToDestroy.push_back(hitbox);
         }
 
         auto eventView = manager.view<AnimationEventComponent>();

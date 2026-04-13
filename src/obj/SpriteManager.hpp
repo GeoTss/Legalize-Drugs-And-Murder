@@ -36,6 +36,7 @@ struct AnimationTrack {
         frameWidth = _width;
         frameHeight = _height;
         frameEvents = _frameEvents;
+        frameDuration = _frameDuration;
         loop = _inLoop;
 
         texture = LoadTexture(_textureFilepath.c_str());
