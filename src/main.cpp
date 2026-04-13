@@ -25,22 +25,24 @@ void initializeAnimations(Manager &manager,
 
     auto lightAttackEvent = eventDispatcher.registerEvent<HunterLightAttackEventTag>();
     lightAttackEvents[0].push_back(lightAttackEvent);
-    lightAttackEvents[0].push_back((uint64_t)eventIDs::LIGHT_ATTACK);
+    // lightAttackEvents[0].push_back((uint64_t)eventIDs::LIGHT_ATTACK);
 
     AnimationTrack lightAttackTrack{
         ASSET_PATH "/Blind-Huntress/10 - attack 1.png", 240, 128, lightAttackEvents, 0.1f, true};
 
     spriteManager.addAnimationTrack(
-        "main", std::move(lightAttackTrack), (uint32_t)hunterStates::ATTACKING);
+        "main", lightAttackTrack, (uint32_t)hunterStates::ATTACKING);
 }
 
 template<typename... EventTags, typename Func>
 void updateEvents(Manager& manager, const Func&& callback){
+    std::cout << "Updating events.\n";
     auto view = manager.view<AnimationEventComponent, EventTags...>();
 
-    for(const auto entity: view){
+    for(auto entity: view){
         callback(manager, entity);
     }
+    std::cout << "Updating events finished.\n";
 }
 
 int main() {
@@ -117,29 +119,37 @@ int main() {
 
         AnimationSystem::update(manager, spriteManager, eventDispatcher, dt, nowTime);
 
-        EndDrawing();
+        std::cout << "Animations finished.\n";
+
+        // EndDrawing();
         
         updateEvents<HunterLightAttackEventTag>(manager, [](Manager& manager, const EntityId eventEntity){
             auto eventInfo = manager.getComponent<AnimationEventComponent>(eventEntity);
             EntityId entity = eventInfo->sourceEntity;
 
+            std::cout << "Getting transform component...\n";
             auto transformComp = manager.getComponent<TransformComponent>(entity);
+            std::cout << "Transform component: " << transformComp->pos.x << ", " << transformComp->pos.y << "\n";
             
-            // DrawRectangleLines(transformComp->pos.x, transformComp->pos.y, 90, 20, YELLOW);
-
             auto hitboxEntity = manager.addEntity();
             HitboxComponent hitboxComp = {
-                .srcEntity = eventEntity,
+                .srcEntity = entity,
                 .x = transformComp->pos.x,
                 .y = transformComp->pos.y,
                 .width = 90,
                 .height = 20
             };
-
+            
+            // DrawRectangleLines(hitboxComp.x, hitboxComp.y, hitboxComp.width, hitboxComp.height, YELLOW);
             manager.addComponents<HitboxComponent, DamageEnemiesTag>(hitboxEntity);
-
             manager.setComponent<HitboxComponent>(hitboxEntity, hitboxComp);
         });
+
+        manager.runSystem<HitboxComponent>([](HitboxComponent& hitbox){
+            DrawRectangleLines(hitbox.x, hitbox.y, hitbox.width, hitbox.height, YELLOW);
+        });
+
+        EndDrawing();
 
 
         std::vector<EntityId> entitiesToDestroy;

@@ -63,8 +63,8 @@ struct AnimationSystem {
             }
 
             auto eventIter = track.frameEvents.find(anim.currentFrame);
-
-            if (eventIter != track.frameEvents.end()) {
+            std::cout << "Dispatching events.\n";
+            if (eventIter != track.frameEvents.end() && !eventIter->second.empty()) {
                 for (auto eventId : eventIter->second) {
 
                     auto eventEntityId = manager.addEntity();
@@ -75,7 +75,7 @@ struct AnimationSystem {
                     //     .duration = 100ms};
                     // manager.addComponent<AnimationEventComponent>(eventEntityId, &eventComp);
 
-                    dispatcher.dispatchConstruction(manager, eventEntityId, eventId, nowTime, 100ms);
+                    dispatcher.dispatchConstruction(manager, eventEntityId, entity, eventId, nowTime, 100ms);
                 }
             }
 
