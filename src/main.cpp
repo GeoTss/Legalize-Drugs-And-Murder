@@ -2,6 +2,8 @@
 #include "obj/ECS/Component.hpp"
 #include "obj/ECS/Manager.hpp"
 #include "obj/SpriteManager.hpp"
+#include "obj/HitboxAttachmentSystem.hpp"
+
 #include <iostream>
 #include <memory>
 #include <raylib.h>
@@ -26,7 +28,8 @@ void initializeAnimations(Manager &manager,
     SpawnHitboxEvent lightAttackHitbox = {
         .width = 90,
         .height = 20,
-        .duration = 300ms
+        .duration = 0.300f,
+        .attached = true
     };
 
     auto lightAttackEvent = eventDispatcher.registerPayloadEvent<SpawnHitboxEvent>(lightAttackHitbox);
@@ -53,16 +56,18 @@ int main() {
 
     std::cout << "Your asset path: " << ASSET_PATH << "\n";
 
+    std::cout << "Position component ID: " << ComponentID<TransformComponent>::_id << "\n";
+    std::cout << "AnimationStateComponent ID: " << ComponentID<AnimationStateComponent>::_id
+    << "\n";
+    std::cout << "Health component ID: " << ComponentID<HealthComponent>::_id << "\n";
+    std::cout << "NothingEffectTag component ID: " << ComponentID<NothingEffectTag>::_id << "\n";
+    std::cout << "PoisonEffectTag component ID: " << ComponentID<PoisonEffectTag>::_id << "\n\n";
+    
     Manager manager;
 
     auto hunter = manager.addEntity();
 
-    std::cout << "Position component ID: " << ComponentID<TransformComponent>::_id << "\n";
-    std::cout << "AnimationStateComponent ID: " << ComponentID<AnimationStateComponent>::_id
-              << "\n";
-    std::cout << "Health component ID: " << ComponentID<HealthComponent>::_id << "\n";
-    std::cout << "NothingEffectTag component ID: " << ComponentID<NothingEffectTag>::_id << "\n";
-    std::cout << "PoisonEffectTag component ID: " << ComponentID<PoisonEffectTag>::_id << "\n\n";
+    manager.addComponent<MainPlayerTag>(hunter);
 
     manager.addComponent<TransformComponent>(hunter);
     TransformComponent transformComp = {{100, 100}};
@@ -102,7 +107,8 @@ int main() {
 
     StatsComponent stats = {
         .attackPower = 10.f,
-        .hitboxScale = 1.f
+        .hitboxScale = 1.f,
+        .speed = 1000.f
     };
     manager.addComponent<StatsComponent>(hunter, &stats);
 
@@ -126,14 +132,27 @@ int main() {
 
         auto nowTime = std::chrono::steady_clock::now();
 
+        manager.runSystem<MainPlayerTag, TransformComponent, StatsComponent>([dt](TransformComponent& transform, StatsComponent& stats){
+            if(IsKeyDown(KEY_W)){
+                transform.pos.y -= stats.speed * dt;
+            }
+            if(IsKeyDown(KEY_S)){
+                transform.pos.y += stats.speed * dt;
+            }
+            if(IsKeyDown(KEY_A)){
+                transform.pos.x -= stats.speed * dt;
+            }
+            if(IsKeyDown(KEY_D)){
+                transform.pos.x += stats.speed * dt;
+            }
+        });
+
+        HitboxAttachmentSystem::update(manager);
+
         BeginDrawing();
         ClearBackground(BLACK);
 
         AnimationSystem::update(manager, spriteManager, eventDispatcher, dt);
-
-        std::cout << "Animations finished.\n";
-
-        // EndDrawing();
         
         updateEvents<SpawnHitboxEvent>(manager, [&nowTime](Manager& manager, const EntityId eventEntity){
 
@@ -155,7 +174,8 @@ int main() {
                 .y = transformComp->pos.y,
                 .width = finalWidth,
                 .height = finalHeight,
-                .damage = statsComp->attackPower
+                .damage = statsComp->attackPower,
+                .attached = hitboxInfo->attached
             };
             
             LifespanComponent lifespanComp = {
@@ -174,14 +194,17 @@ int main() {
 
         EndDrawing();
 
-
         std::vector<EntityId> entitiesToDestroy;
 
-        auto hitboxView = manager.view<HitboxComponent>();
-        for(auto hitbox: hitboxView){
-            auto lifespan = manager.getComponent<LifespanComponent>(hitbox);
-            if((nowTime - lifespan->startPoint) >= lifespan->duration)
-                entitiesToDestroy.push_back(hitbox);
+        auto lifeView = manager.view<LifespanComponent>();
+
+        for(auto timedEntity: lifeView){
+            auto& lifespanComp = lifeView.get<LifespanComponent>(timedEntity);
+
+            lifespanComp.duration -= dt;
+
+            if(lifespanComp.duration <= 0)
+                entitiesToDestroy.push_back(timedEntity);
         }
 
         auto eventView = manager.view<AnimationEventComponent>();

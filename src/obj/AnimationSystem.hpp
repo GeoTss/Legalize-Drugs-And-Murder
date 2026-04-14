@@ -28,6 +28,8 @@ struct AnimationStateComponent {
     uint32_t currentState = 0;
     uint32_t currentFrame = 0;
     float stateTimer = 0.f;
+
+    int lastProcessedFrame = -1;
 };
 
 using namespace std::chrono_literals;
@@ -62,15 +64,17 @@ struct AnimationSystem {
                 }
             }
 
-            auto eventIter = track.frameEvents.find(anim.currentFrame);
-            std::cout << "Dispatching events.\n";
-            if (eventIter != track.frameEvents.end() && !eventIter->second.empty()) {
+            if (anim.lastProcessedFrame != anim.currentFrame) {
+                auto eventIter = track.frameEvents.find(anim.currentFrame);
+                if (eventIter != track.frameEvents.end() && !eventIter->second.empty()) {
 
-                for (auto eventId : eventIter->second) {
+                    for (auto eventId : eventIter->second) {
 
-                    auto eventEntityId = manager.addEntity();
-                    dispatcher.dispatchConstruction(manager, eventEntityId, entity, eventId);
+                        auto eventEntityId = manager.addEntity();
+                        dispatcher.dispatchConstruction(manager, eventEntityId, entity, eventId);
+                    }
                 }
+                anim.lastProcessedFrame = anim.currentFrame;
             }
 
             uint32_t spriteIndex = track.frames[anim.currentFrame];
