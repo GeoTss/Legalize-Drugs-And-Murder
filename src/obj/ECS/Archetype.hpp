@@ -8,9 +8,12 @@
 #include <ostream>
 #include <unordered_map>
 #include <vector>
+#include <bitset>
 
 using ArchetypeId = std::uint16_t;
-using ArchSignature_t = std::vector<ComponentId>;
+
+constexpr size_t MAX_COMPONENTS = 64;
+using ArchSignature_t = std::bitset<MAX_COMPONENTS>;
 
 struct Archetype;
 
@@ -26,27 +29,18 @@ struct ArchetypeEdge {
     std::unordered_map<ComponentId, Archetype *> replace;
 };
 
-struct ArchSignatureHash {
-    std::size_t operator()(const ArchSignature_t &s) const {
-        std::size_t seed = s.size();
-
-        for (const auto i : s) {
-            seed ^= std::hash<ComponentId>{}(i) + 0x9e3779b9 + (seed << 6) + (seed >> 2);
-        }
-        return seed;
-    }
-};
-
 struct Archetype {
 
     std::unordered_map<ComponentId, ArchetypeEdge> edges;
     ArchSignature_t typeSet;
+    std::vector<ComponentId> componentIds;
     std::vector<std::vector<std::byte>> components;
     std::vector<EntityId> entities;
 
     ArchetypeId id;
     uint16_t trueComponentCount;
 
+    Archetype() = default;
     Archetype(ArchetypeId _id) : id{_id} {}
 
     friend std::ostream &operator<<(std::ostream &os, const Archetype &arch) {
@@ -54,7 +48,7 @@ struct Archetype {
 
         os << "Component count: " << arch.typeSet.size() << '\n';
         os << "Component Ids: [ ";
-        for (const auto cid : arch.typeSet) {
+        for (const auto cid : arch.componentIds) {
             os << cid << ' ';
         }
         os << "]\n";

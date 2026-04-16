@@ -47,6 +47,9 @@ struct HitboxComponent {
     float y;
     float width;
     float height;
+    float offsetX;
+    float offsetY;
+    
     float damage;
 
     bool attached;
@@ -55,9 +58,15 @@ struct HitboxComponent {
 struct SpawnHitboxEvent {
     float width;
     float height;
+    float offsetX;
+    float offsetY;
     float duration;
 
     bool attached = false;
+};
+
+struct StateComponent{
+    uint8_t stateID;
 };
 
 struct MainPlayerTag{};

@@ -25,7 +25,6 @@ struct AnimationStateComponent {
 
     AnimationProfile *profile = nullptr;
 
-    uint32_t currentState = 0;
     uint32_t currentFrame = 0;
     float stateTimer = 0.f;
 
@@ -42,12 +41,15 @@ struct AnimationSystem {
         for (auto entity : view) {
             auto &transform = view.get<TransformComponent>(entity);
             auto &anim = view.get<AnimationStateComponent>(entity);
+            auto &stateComponent = view.get<StateComponent>(entity);
+
+            uint8_t currentState = stateComponent.stateID;
 
             if (anim.profile == nullptr ||
-                !anim.profile->stateAnimations.contains(anim.currentState))
+                !anim.profile->stateAnimations.contains(currentState))
                 continue;
 
-            const AnimationTrack &track = anim.profile->stateAnimations[anim.currentState];
+            const AnimationTrack &track = anim.profile->stateAnimations[currentState];
 
             anim.stateTimer += dt;
 

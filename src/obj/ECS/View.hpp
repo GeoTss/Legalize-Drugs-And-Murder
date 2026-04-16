@@ -5,6 +5,7 @@
 #include "Manager.hpp"
 #include <vector>
 
+
 template <typename... Components> struct View {
     Manager *manager;
     std::vector<Archetype *> matchedArchetypes;
@@ -62,7 +63,9 @@ template <typename... Components> struct View {
 
     Iterator end() const { return Iterator(&matchedArchetypes, matchedArchetypes.size(), 0); }
 
-    template <typename T> T &get(EntityId entity) { return *manager->getComponent<T>(entity); }
+    template <typename T> T &get(EntityId entity) { 
+        return manager->getComponentSure<T>(entity);
+    }
 };
 
 template <typename... Components> View<Components...> Manager::view() {

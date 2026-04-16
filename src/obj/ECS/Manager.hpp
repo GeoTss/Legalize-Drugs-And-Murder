@@ -56,7 +56,7 @@ struct Manager {
 
     std::unordered_map<ComponentId, size_t> component_size;
     std::unordered_map<EntityId, Record> entity_index;
-    std::unordered_map<ArchSignature_t, Archetype, ArchSignatureHash> archetype_index;
+    std::unordered_map<ArchSignature_t, Archetype> archetype_index;
     std::unordered_map<ArchetypeId, Archetype *> archetypeIdIndex;
     std::unordered_map<ComponentId, ArchetypeMap> component_index;
 
@@ -162,6 +162,21 @@ struct Manager {
         return (T *)&archetype->components[a_record.column][record.row * sizeof(T)];
     }
 
+    template <typename T> T &getComponentSure(EntityId entity) {
+        if constexpr (std::is_empty_v<T>)
+            return nullptr;
+
+        static const ComponentId component = ComponentID<T>::_id;
+
+        Record &record = entity_index[entity];
+        Archetype *archetype = record.archetype;
+
+        ArchetypeMap &archtypes = component_index[component];
+
+        ArchtypeRecord &a_record = archtypes[archetype->id];
+        return (T &)archetype->components[a_record.column][record.row * sizeof(T)];
+    }
+
     Archetype *getArchetype(EntityId entity) {
         Record &record = entity_index[entity];
         return record.archetype;
@@ -202,16 +217,17 @@ struct Manager {
         Archetype *nextArchtype = nullptr;
 
         if (currentArchtype == nullptr) {
-            std::vector<ComponentId> rootArch = {component};
+            ArchSignature_t rootArch;
+            rootArch.set(component);
             nextArchtype = getOrCreateArchetype(rootArch);
         } else {
             ArchetypeEdge &edge = currentArchtype->edges[component];
             if (edge.add != nullptr) {
                 nextArchtype = edge.add;
             } else {
+
                 ArchSignature_t newSignature = currentArchtype->typeSet;
-                newSignature.push_back(component);
-                std::sort(newSignature.begin(), newSignature.end());
+                newSignature.set(component);
 
                 nextArchtype = getOrCreateArchetype(newSignature);
                 edge.add = nextArchtype;
@@ -222,7 +238,7 @@ struct Manager {
         size_t newRow = nextArchtype->entities.size();
         nextArchtype->entities.push_back(entity);
 
-        for (ComponentId cid : nextArchtype->typeSet) {
+        for (ComponentId cid : nextArchtype->componentIds) {
             size_t compSize = component_size[cid];
             if (compSize > 0) {
                 size_t col = component_index[cid][nextArchtype->id].column;
@@ -233,7 +249,7 @@ struct Manager {
         if (currentArchtype != nullptr) {
             size_t oldRow = record.row;
 
-            for (ComponentId cid : currentArchtype->typeSet) {
+            for (ComponentId cid : currentArchtype->componentIds) {
                 size_t compSize = component_size[cid];
                 if (compSize == 0)
                     continue;
@@ -250,7 +266,7 @@ struct Manager {
             EntityId lastEntity = currentArchtype->entities.back();
 
             if (oldRow != lastRow) {
-                for (ComponentId cid : currentArchtype->typeSet) {
+                for (ComponentId cid : currentArchtype->componentIds) {
                     size_t compSize = component_size[cid];
                     if (compSize == 0)
                         continue;
@@ -265,7 +281,7 @@ struct Manager {
                 currentArchtype->entities[oldRow] = lastEntity;
             }
 
-            for (ComponentId cid : currentArchtype->typeSet) {
+            for (ComponentId cid : currentArchtype->componentIds) {
                 size_t compSize = component_size[cid];
                 if (compSize == 0)
                     continue;
@@ -303,16 +319,8 @@ struct Manager {
         if (currentArchtype != nullptr) {
             targetSignature = currentArchtype->typeSet;
         }
+        (targetSignature.set(ComponentID<Ts>::_id), ...);
 
-        std::array<ComponentId, sizeof...(Ts)> newComps = {ComponentID<Ts>::_id...};
-        for (ComponentId id : newComps) {
-            if (std::find(targetSignature.begin(), targetSignature.end(), id) ==
-                targetSignature.end()) {
-                targetSignature.push_back(id);
-            }
-        }
-
-        std::sort(targetSignature.begin(), targetSignature.end());
         Archetype *nextArchtype = getOrCreateArchetype(targetSignature);
 
         if (currentArchtype == nextArchtype) {
@@ -332,7 +340,7 @@ struct Manager {
         size_t newRow = nextArchtype->entities.size();
         nextArchtype->entities.push_back(entity);
 
-        for (ComponentId cid : nextArchtype->typeSet) {
+        for (ComponentId cid : nextArchtype->componentIds) {
             size_t compSize = component_size[cid];
             if (compSize > 0) {
                 size_t col = component_index[cid][nextArchtype->id].column;
@@ -343,7 +351,7 @@ struct Manager {
         if (currentArchtype != nullptr) {
             size_t oldRow = record.row;
 
-            for (ComponentId cid : currentArchtype->typeSet) {
+            for (ComponentId cid : currentArchtype->componentIds) {
                 size_t compSize = component_size[cid];
                 if (compSize == 0)
                     continue;
@@ -360,7 +368,7 @@ struct Manager {
             EntityId lastEntity = currentArchtype->entities.back();
 
             if (oldRow != lastRow) {
-                for (ComponentId cid : currentArchtype->typeSet) {
+                for (ComponentId cid : currentArchtype->componentIds) {
                     size_t compSize = component_size[cid];
                     if (compSize == 0)
                         continue;
@@ -374,7 +382,7 @@ struct Manager {
                 currentArchtype->entities[oldRow] = lastEntity;
             }
 
-            for (ComponentId cid : currentArchtype->typeSet) {
+            for (ComponentId cid : currentArchtype->componentIds) {
                 size_t compSize = component_size[cid];
                 if (compSize == 0)
                     continue;
@@ -423,16 +431,10 @@ struct Manager {
         if (edge.remove != nullptr) {
             nextArchtype = edge.remove;
         } else {
-            ArchSignature_t newSignature;
-            newSignature.reserve(currentArchtype->typeSet.size() - 1);
-
-            for (ComponentId cid : currentArchtype->typeSet) {
-                if (cid != component) {
-                    newSignature.push_back(cid);
-                }
-            }
-
-            if (!newSignature.empty()) {
+            ArchSignature_t newSignature = currentArchtype->typeSet;
+            newSignature.reset(component);
+            
+            if (newSignature.any()) {
                 nextArchtype = getOrCreateArchetype(newSignature);
                 edge.remove = nextArchtype;
                 nextArchtype->edges[component].add = currentArchtype;
@@ -444,7 +446,7 @@ struct Manager {
             newRow = nextArchtype->entities.size();
             nextArchtype->entities.push_back(entity);
 
-            for (ComponentId cid : nextArchtype->typeSet) {
+            for (ComponentId cid : nextArchtype->componentIds) {
                 size_t compSize = component_size[cid];
                 if (compSize > 0) {
                     size_t col = component_index[cid][nextArchtype->id].column;
@@ -456,7 +458,7 @@ struct Manager {
         size_t oldRow = record.row;
 
         if (nextArchtype != nullptr) {
-            for (ComponentId cid : currentArchtype->typeSet) {
+            for (ComponentId cid : currentArchtype->componentIds) {
                 if (cid == component)
                     continue;
 
@@ -477,7 +479,7 @@ struct Manager {
         EntityId lastEntity = currentArchtype->entities.back();
 
         if (oldRow != lastRow) {
-            for (ComponentId cid : currentArchtype->typeSet) {
+            for (ComponentId cid : currentArchtype->componentIds) {
                 size_t compSize = component_size[cid];
                 if (compSize == 0)
                     continue;
@@ -491,7 +493,7 @@ struct Manager {
             currentArchtype->entities[oldRow] = lastEntity;
         }
 
-        for (ComponentId cid : currentArchtype->typeSet) {
+        for (ComponentId cid : currentArchtype->componentIds) {
             size_t compSize = component_size[cid];
             if (compSize == 0)
                 continue;
@@ -512,18 +514,19 @@ struct Manager {
 
     template <typename _SrcComp, typename _DstComp>
     void replaceComponent(EntityId entity, const _DstComp *initialValue = nullptr) {
-        static_assert(ComponentID<_SrcComp>::_id != ComponentID<_DstComp>::_id);
+        static_assert(ComponentID<_SrcComp>::_id != ComponentID<_DstComp>::_id,
+                      "Source and Destination components must be different.");
 
         Record &record = entity_index[entity];
         Archetype *currentArchetype = record.archetype;
 
-        if (currentArchetype == nullptr || !has_component(entity, ComponentID<_SrcComp>::_id))
-            return;
-        if (has_component(entity, ComponentID<_DstComp>::_id))
-            return;
-
         static const ComponentId srcId = ComponentID<_SrcComp>::_id;
         static const ComponentId dstId = ComponentID<_DstComp>::_id;
+
+        if (currentArchetype == nullptr || !has_component(entity, srcId))
+            return;
+        if (has_component(entity, dstId))
+            return;
 
         component_size[dstId] = std::is_empty_v<_DstComp> ? 0 : sizeof(_DstComp);
 
@@ -533,15 +536,9 @@ struct Manager {
         if (edge.replace.contains(dstId)) {
             withDstArch = edge.replace[dstId];
         } else {
-            ArchSignature_t withDstSignature;
-            withDstSignature.reserve(currentArchetype->typeSet.size());
-            for (ComponentId compID : currentArchetype->typeSet) {
-                if (compID != srcId) {
-                    withDstSignature.push_back(compID);
-                }
-            }
-            withDstSignature.push_back(dstId);
-            std::sort(withDstSignature.begin(), withDstSignature.end());
+            ArchSignature_t withDstSignature = currentArchetype->typeSet;
+            withDstSignature.reset(srcId);
+            withDstSignature.set(dstId);
 
             withDstArch = getOrCreateArchetype(withDstSignature);
             edge.replace[dstId] = withDstArch;
@@ -549,8 +546,8 @@ struct Manager {
 
         size_t newRow = withDstArch->entities.size();
         withDstArch->entities.push_back(entity);
-
-        for (ComponentId cid : withDstArch->typeSet) {
+        
+        for (ComponentId cid : withDstArch->componentIds) {
             size_t compSize = component_size[cid];
             if (compSize > 0) {
                 size_t col = component_index[cid][withDstArch->id].column;
@@ -560,7 +557,7 @@ struct Manager {
 
         size_t oldRow = record.row;
 
-        for (ComponentId cid : currentArchetype->typeSet) {
+        for (ComponentId cid : currentArchetype->componentIds) {
             if (cid == srcId)
                 continue;
 
@@ -587,7 +584,7 @@ struct Manager {
         EntityId lastEntity = currentArchetype->entities.back();
 
         if (oldRow != lastRow) {
-            for (ComponentId cid : currentArchetype->typeSet) {
+            for (ComponentId cid : currentArchetype->componentIds) {
                 size_t compSize = component_size[cid];
                 if (compSize == 0)
                     continue;
@@ -601,7 +598,7 @@ struct Manager {
             currentArchetype->entities[oldRow] = lastEntity;
         }
 
-        for (ComponentId cid : currentArchetype->typeSet) {
+        for (ComponentId cid : currentArchetype->componentIds) {
             size_t compSize = component_size[cid];
             if (compSize == 0)
                 continue;
@@ -623,41 +620,17 @@ struct Manager {
     }
 
     template <typename... Components> std::vector<Archetype *> queryArchtypes() {
-        if constexpr (sizeof...(Components) == 0)
-            return {};
-
-        constexpr auto compileTimeComponents = getSortedArray<Components...>();
-        auto components = compileTimeComponents;
-
-        std::sort(components.begin(), components.end(), [this](auto a, auto b) {
-            auto itA = component_index.find(a);
-            size_t sizeA = (itA != component_index.end()) ? itA->second.size() : 0;
-            auto itB = component_index.find(b);
-            size_t sizeB = (itB != component_index.end()) ? itB->second.size() : 0;
-            return sizeA < sizeB;
-        });
+        ArchSignature_t querySig;
+        (querySig.set(ComponentID<Components>::_id), ...);
 
         std::vector<Archetype *> queryRes;
-        ComponentId firstComponent = components[0];
-        auto selectedIt = component_index.find(firstComponent);
 
-        if (selectedIt == component_index.end())
-            return {};
-
-        ArchetypeMap &candidates = selectedIt->second;
-
-        for (auto &[archId, archRecord] : candidates) {
-            bool matchesAll = true;
-            for (int i = 1; i < components.size(); ++i) {
-                if (!component_index[components[i]].contains(archId)) {
-                    matchesAll = false;
-                    break;
-                }
-            }
-            if (matchesAll) {
-                queryRes.push_back(archetypeIdIndex[archId]);
+        for (auto &[archId, arch] : archetypeIdIndex) {
+            if ((arch->typeSet & querySig) == querySig) {
+                queryRes.push_back(arch);
             }
         }
+
         return queryRes;
     }
 
@@ -699,19 +672,28 @@ struct Manager {
 
   private:
     Archetype *getOrCreateArchetype(const ArchSignature_t &signature) {
-
         auto archIt = archetype_index.find(signature);
         if (archIt != archetype_index.end()) {
             return &archIt->second;
         }
 
         ArchetypeId newId = archetypeIdCount++;
-        auto [insertedIt, success] = archetype_index.try_emplace(signature, newId);
+
+        auto [insertedIt, success] = archetype_index.try_emplace(signature, Archetype{});
         Archetype &newArchtype = insertedIt->second;
+
+        newArchtype.id = newId;
+        newArchtype.typeSet = signature;
         archetypeIdIndex[newId] = &newArchtype;
 
+        for (size_t i = 0; i < MAX_COMPONENTS; ++i) {
+            if (signature.test(i)) {
+                newArchtype.componentIds.push_back(static_cast<ComponentId>(i));
+            }
+        }
+
         size_t trueSize = 0;
-        for (const auto cid : signature) {
+        for (const auto cid : newArchtype.componentIds) {
             if (component_size[cid] != 0)
                 trueSize += 1;
         }
@@ -720,16 +702,13 @@ struct Manager {
         newArchtype.components.resize(trueSize);
 
         size_t col = 0;
-        for (size_t i = 0; i < signature.size(); ++i) {
-            ComponentId cid = signature[i];
+        for (const auto cid : newArchtype.componentIds) {
             component_index[cid][newArchtype.id] = ArchtypeRecord{col};
 
             if (component_size[cid] != 0) {
                 col++;
             }
         }
-
-        newArchtype.typeSet = signature;
 
         return &newArchtype;
     }

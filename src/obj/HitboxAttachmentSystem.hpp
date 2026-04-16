@@ -11,19 +11,32 @@ struct HitboxAttachmentSystem {
         auto hitboxView = manager.view<HitboxComponent>();
 
         for (auto hitboxEntity : hitboxView) {
-            auto& hitbox = hitboxView.get<HitboxComponent>(hitboxEntity);
+            auto &hitbox = hitboxView.get<HitboxComponent>(hitboxEntity);
 
             if (hitbox.attached == false)
-                continue;;
+                continue;
+            ;
 
             EntityId srcEntity = hitbox.srcEntity;
 
             auto srcTransform = manager.getComponent<TransformComponent>(srcEntity);
-            if (srcTransform == nullptr)
+            auto srcStats = manager.getComponent<StatsComponent>(srcEntity);
+
+            if (srcTransform == nullptr || srcStats == nullptr)
                 continue;
 
-            hitbox.x = srcTransform->pos.x;
-            hitbox.y = srcTransform->pos.y;
+            float finalWidth = hitbox.width * srcStats->hitboxScale;
+            float finalHeight = hitbox.height * srcStats->hitboxScale;
+
+            float dirMultiplier = (srcTransform->facingDirection == -1) ? -1.0f : 1.0f;
+
+            float startingOffsetX = hitbox.offsetX * dirMultiplier;
+
+            float spawnX = (srcTransform->pos.x + startingOffsetX) - (finalWidth / 2.0f);
+            float spawnY = (srcTransform->pos.y + hitbox.offsetY);
+
+            hitbox.x = spawnX;
+            hitbox.y = spawnY;
         }
     }
 };
