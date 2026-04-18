@@ -547,6 +547,15 @@ struct Manager {
         record.archetype = withDstArch;
     }
 
+    template <typename T> bool has_component(EntityId entity) {
+        static constexpr size_t component = ComponentID<T>::_id;
+
+        Archetype *archetype = entity_index[entity].archetype;
+        if (archetype == nullptr)
+            return false;
+        return archetype->typeSet.test(component);
+    }
+
     bool has_component(EntityId entity, ComponentId component) {
         Archetype *archetype = entity_index[entity].archetype;
         if (archetype == nullptr)
@@ -566,7 +575,7 @@ struct Manager {
         }
         if (lastArchetypeCount != archetypeIdCount) {
             queryRes.clear();
-            
+
             for (auto &[archId, arch] : archetypeIdIndex) {
                 if ((arch->typeSet & querySig) == querySig) {
                     queryRes.push_back(arch);
@@ -577,40 +586,72 @@ struct Manager {
         return queryRes;
     }
 
-    template <typename... Components, typename Func> void runSystem(Func &&systemFunction) {
+    template <typename... Components, typename Func> inline void runSystem(Func &&func) {
         if constexpr (sizeof...(Components) == 0)
             return;
 
         using FilteredList = typename FilterEmpty<Components...>::type;
-        auto queriedArchetypes = queryArchtypes<Components...>();
 
-        auto executeLoops = [&]<typename... Filtered>(TypeList<Filtered...>) {
-            for (auto arch : queriedArchetypes) {
-                if (arch->entities.empty())
-                    continue;
-                Table *table = arch->dataTable;
-
-                const std::tuple<Filtered *...> basePointers = {reinterpret_cast<Filtered *>(
-                    table->components[table_column_index[ComponentID<Filtered>::_id][table->id]]
-                        .data())...};
-
-                for (EntityId e : arch->entities) {
-                    size_t physRow = entity_index[e].row;
-                    std::apply(
-                        [&](auto *...compArray) {
-                            systemFunction(compArray[physRow]...);
-                        },
-                        basePointers);
-                }
-            }
-        };
-
-        executeLoops(FilteredList{});
+        runSystemImpl<Components...>(std::forward<Func>(func), FilteredList{});
     }
 
     template <typename... Ts> View<Ts...> view();
 
   private:
+    template <typename... Components, typename Func, typename... Filtered>
+    void runSystemImpl(Func &&systemFunction, TypeList<Filtered...>)
+        requires std::is_invocable_v<Func, EntityId, Filtered &...>
+    {
+
+        auto queriedArchetypes = queryArchtypes<Components...>();
+
+        for (auto arch : queriedArchetypes) {
+            if (arch->entities.empty())
+                continue;
+            Table *table = arch->dataTable;
+
+            const std::tuple<Filtered *...> basePointers = {reinterpret_cast<Filtered *>(
+                table->components[table_column_index[ComponentID<Filtered>::_id][table->id]]
+                    .data())...};
+
+            for (EntityId e : arch->entities) {
+                size_t physRow = entity_index[e].row;
+                std::apply(
+                    [&](auto *...compArray) {
+                        systemFunction(e, compArray[physRow]...);
+                    },
+                    basePointers);
+            }
+        }
+    }
+
+    template <typename... Components, typename Func, typename... Filtered>
+    void runSystemImpl(Func &&systemFunction, TypeList<Filtered...>)
+        requires std::is_invocable_v<Func, Filtered &...>
+    {
+
+        auto queriedArchetypes = queryArchtypes<Components...>();
+
+        for (auto arch : queriedArchetypes) {
+            if (arch->entities.empty())
+                continue;
+            Table *table = arch->dataTable;
+
+            const std::tuple<Filtered *...> basePointers = {reinterpret_cast<Filtered *>(
+                table->components[table_column_index[ComponentID<Filtered>::_id][table->id]]
+                    .data())...};
+
+            for (EntityId e : arch->entities) {
+                size_t physRow = entity_index[e].row;
+                std::apply(
+                    [&](auto *...compArray) {
+                        systemFunction(compArray[physRow]...);
+                    },
+                    basePointers);
+            }
+        }
+    }
+
     void removeEntityFromArchetype(Archetype *arch, EntityId entity) {
         auto it = std::find(arch->entities.begin(), arch->entities.end(), entity);
         if (it != arch->entities.end()) {

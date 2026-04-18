@@ -58,6 +58,10 @@ void updateEvents(Manager &manager, const Func &&callback) {
     }
 }
 
+// void updatePlayerStates(Manager& manager){
+
+// }
+
 int main() {
 
     std::cout << "Your asset path: " << ASSET_PATH << "\n";
@@ -127,7 +131,9 @@ int main() {
     manager.addComponent<AnimationStateComponent>(hunter, &animationComponent);
     StateComponent stateComp = {.stateID = (uint8_t)hunterStates::IDLE};
     manager.addComponent<StateComponent>(hunter, &stateComp);
-    
+
+    manager.addComponent<PlayerInput>(hunter);
+
     SetTargetFPS(60);
 
     while (!WindowShouldClose()) {
@@ -135,32 +141,96 @@ int main() {
 
         auto nowTime = std::chrono::steady_clock::now();
 
-        manager.runSystem<MainPlayerTag, TransformComponent, StatsComponent, StateComponent>(
-            [dt](TransformComponent &transform, StatsComponent &stats, StateComponent &state) {
-                state.stateID = (uint8_t)hunterStates::IDLE;
+        manager.runSystem<PlayerInput>([hunter, &manager](EntityId, PlayerInput &input) {
+            input = {0};
 
-                if (IsKeyDown(KEY_W)) {
-                    transform.pos.y -= stats.speed * dt;
-                    state.stateID = (uint8_t)hunterStates::RUNNING;
+            if (IsKeyDown(KEY_W)) {
+                input.pressed_W = 1;
+            }
+            if (IsKeyDown(KEY_S)) {
+                input.pressed_S = 1;
+            }
+            if (IsKeyDown(KEY_A)) {
+                input.pressed_A = 1;
+            }
+            if (IsKeyDown(KEY_D)) {
+                input.pressed_D = 1;
+            }
+            if (IsKeyDown(KEY_E)) {
+                input.pressed_E = 1;
+            }
+        });
+
+        manager.runSystem<PlayerInput, StateComponent>(
+            [&manager](EntityId entity, PlayerInput &input, StateComponent &state) {
+                uint8_t targetState = (uint8_t)hunterStates::IDLE;
+
+                if (input.pressed_W || input.pressed_S || input.pressed_A || input.pressed_D) {
+                    targetState = (uint8_t)hunterStates::RUNNING;
                 }
-                if (IsKeyDown(KEY_S)) {
-                    transform.pos.y += stats.speed * dt;
-                    state.stateID = (uint8_t)hunterStates::RUNNING;
+
+                if (input.pressed_E) {
+                    targetState = (uint8_t)hunterStates::ATTACKING;
                 }
-                if (IsKeyDown(KEY_A)) {
-                    transform.pos.x -= stats.speed * dt;
-                    transform.facingDirection = -1;
-                    state.stateID = (uint8_t)hunterStates::RUNNING;
-                }
-                if (IsKeyDown(KEY_D)) {
-                    transform.pos.x += stats.speed * dt;
-                    transform.facingDirection = 1;
-                    state.stateID = (uint8_t)hunterStates::RUNNING;
-                }
-                if (IsKeyDown(KEY_E)) {
-                    state.stateID = (uint8_t)hunterStates::ATTACKING;
+
+                if (state.stateID != targetState) {
+
+                    switch (state.stateID) {
+                    case (uint8_t)hunterStates::IDLE:
+                        manager.removeComponent<IdleStateTag>(entity);
+                        break;
+                    case (uint8_t)hunterStates::RUNNING:
+                        manager.removeComponent<RunningStateTag>(entity);
+                        break;
+                    case (uint8_t)hunterStates::ATTACKING:
+                        manager.removeComponent<AttackingStateTag>(entity);
+                        break;
+                    }
+
+                    switch (targetState) {
+                    case (uint8_t)hunterStates::IDLE:
+                        manager.addComponent<IdleStateTag>(entity);
+                        break;
+                    case (uint8_t)hunterStates::RUNNING:
+                        manager.addComponent<RunningStateTag>(entity);
+                        break;
+                    case (uint8_t)hunterStates::ATTACKING:
+                        manager.addComponent<AttackingStateTag>(entity);
+                        break;
+                    }
+
+                    state.stateID = targetState;
                 }
             });
+
+        manager.runSystem<MainPlayerTag, IdleStateTag>([]() {
+            // Maybe do stuff
+        });
+
+        manager.runSystem<PlayerInput, TransformComponent, StatsComponent, RunningStateTag>(
+            [dt](EntityId entity,
+                 PlayerInput &input,
+                 TransformComponent &transform,
+                 StatsComponent &stats) {
+                if (input.pressed_W) {
+                    transform.pos.y -= stats.speed * dt;
+                }
+                if (input.pressed_S) {
+                    transform.pos.y += stats.speed * dt;
+                }
+                if (input.pressed_A) {
+                    transform.pos.x -= stats.speed * dt;
+                    transform.facingDirection = -1;
+                }
+                if (input.pressed_D) {
+                    transform.pos.x += stats.speed * dt;
+                    transform.facingDirection = 1;
+                }
+            });
+
+        manager.runSystem<MainPlayerTag, AttackingStateTag>([]() {
+            // Maybe do stuff
+        });
 
         HitboxAttachmentSystem::update(manager);
 
@@ -190,16 +260,15 @@ int main() {
                 float spawnY = (transformComp->pos.y + hitboxInfo->offsetY);
 
                 auto hitboxEntity = manager.addEntity();
-                HitboxComponent hitboxComp = {
-                    .srcEntity = entity,
-                    .x = spawnX,
-                    .y = spawnY,
-                    .width = finalWidth,
-                    .height = finalHeight,
-                    .offsetX = hitboxInfo->offsetX,
-                    .offsetY = hitboxInfo->offsetY,
-                    .damage = statsComp->attackPower,
-                    .attached = hitboxInfo->attached};
+                HitboxComponent hitboxComp = {.srcEntity = entity,
+                                              .x = spawnX,
+                                              .y = spawnY,
+                                              .width = finalWidth,
+                                              .height = finalHeight,
+                                              .offsetX = hitboxInfo->offsetX,
+                                              .offsetY = hitboxInfo->offsetY,
+                                              .damage = statsComp->attackPower,
+                                              .attached = hitboxInfo->attached};
 
                 LifespanComponent lifespanComp = {.startPoint = nowTime,
                                                   .duration = hitboxInfo->duration};
@@ -208,10 +277,9 @@ int main() {
                     hitboxEntity);
                 manager.setComponent<LifespanComponent>(hitboxEntity, lifespanComp);
                 manager.setComponent<HitboxComponent>(hitboxEntity, hitboxComp);
-            }
-        );
+            });
 
-        manager.runSystem<HitboxComponent>([](HitboxComponent &hitbox) {
+        manager.runSystem<HitboxComponent>([](EntityId entity, HitboxComponent &hitbox) {
             DrawRectangleLines(hitbox.x, hitbox.y, hitbox.width, hitbox.height, YELLOW);
         });
 
@@ -219,16 +287,16 @@ int main() {
 
         std::vector<EntityId> entitiesToDestroy;
 
-        auto lifeView = manager.view<LifespanComponent>();
+        // auto lifeView = manager.view<LifespanComponent>();
 
-        for (auto timedEntity : lifeView) {
-            auto &lifespanComp = lifeView.get<LifespanComponent>(timedEntity);
+        // for (auto timedEntity : lifeView) {
+        //     auto &lifespanComp = lifeView.get<LifespanComponent>(timedEntity);
 
-            lifespanComp.duration -= dt;
+        //     lifespanComp.duration -= dt;
 
-            if (lifespanComp.duration <= 0)
-                entitiesToDestroy.push_back(timedEntity);
-        }
+        //     if (lifespanComp.duration <= 0)
+        //         entitiesToDestroy.push_back(timedEntity);
+        // }
 
         auto eventView = manager.view<AnimationEventComponent>();
         for (auto event : eventView) {

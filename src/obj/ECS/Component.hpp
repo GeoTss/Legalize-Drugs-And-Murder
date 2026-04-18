@@ -69,6 +69,13 @@ struct StateComponent{
     uint8_t stateID;
 };
 
+struct PlayerInput{
+    bool pressed_W: 1;
+    bool pressed_S: 1;
+    bool pressed_A: 1;
+    bool pressed_D: 1;
+    bool pressed_E: 1;
+};
 
 struct MainPlayerTag{};
 struct IdleStateTag{};
