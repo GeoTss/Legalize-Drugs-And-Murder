@@ -287,21 +287,16 @@ int main() {
 
         std::vector<EntityId> entitiesToDestroy;
 
-        // auto lifeView = manager.view<LifespanComponent>();
+        manager.runSystem<LifespanComponent>([&entitiesToDestroy, dt](EntityId timedEntity, LifespanComponent &lifespan) {
+            lifespan.duration -= dt;
 
-        // for (auto timedEntity : lifeView) {
-        //     auto &lifespanComp = lifeView.get<LifespanComponent>(timedEntity);
+            if (lifespan.duration <= 0)
+                entitiesToDestroy.push_back(timedEntity);
+        });
 
-        //     lifespanComp.duration -= dt;
-
-        //     if (lifespanComp.duration <= 0)
-        //         entitiesToDestroy.push_back(timedEntity);
-        // }
-
-        auto eventView = manager.view<AnimationEventComponent>();
-        for (auto event : eventView) {
-            entitiesToDestroy.push_back(event);
-        }
+        manager.runSystem<AnimationEventComponent>([&entitiesToDestroy](EntityId eventEntity, AnimationEventComponent& eventComp){
+            entitiesToDestroy.push_back(eventEntity);
+        });
 
         for (auto entity : entitiesToDestroy) {
             manager.destroyEntity(entity);
