@@ -15,7 +15,6 @@
 #include "Component.hpp"
 #include "Entity.hpp"
 
-// --- Meta-programming utilities (Unchanged) ---
 template <typename... Ts> struct TypeList {};
 template <typename L1, typename L2> struct ConcatLists;
 template <typename... Ts, typename... Ys> struct ConcatLists<TypeList<Ts...>, TypeList<Ys...>> {
@@ -32,11 +31,9 @@ template <typename T, typename... Rest> struct FilterEmpty<T, Rest...> {
     >::type;
 };
 
-// The global record now tracks the logical group (Archetype) 
-// and the physical memory row inside the Table!
 struct Record {
     Archetype *archetype;
-    size_t row; // Physically represents the Table Row
+    size_t row;
 };
 
 template <typename... Components> struct View;
@@ -46,15 +43,12 @@ struct Manager {
     std::unordered_map<ComponentId, size_t> component_size;
     std::unordered_map<EntityId, Record> entity_index;
     
-    // Logical groupings (Tags + Data)
     std::unordered_map<ArchSignature_t, Archetype> archetype_index;
     std::unordered_map<ArchetypeId, Archetype *> archetypeIdIndex;
     
-    // Physical groupings (Data only)
     std::unordered_map<TableSignature_t, Table> table_index;
     std::unordered_map<TableID, Table *> tableIdIndex;
     
-    // Maps ComponentId -> TableID -> Array Column Index
     std::unordered_map<ComponentId, std::unordered_map<TableID, size_t>> table_column_index;
 
     EntityId entityIdCount = 0;
@@ -78,14 +72,12 @@ struct Manager {
             Archetype *arch = record.archetype;
             Table *table = arch->dataTable;
 
-            // 1. Remove from logical Archetype (Swap and pop on entities list)
             auto entIt = std::find(arch->entities.begin(), arch->entities.end(), entity);
             if (entIt != arch->entities.end()) {
                 *entIt = arch->entities.back();
                 arch->entities.pop_back();
             }
 
-            // 2. Remove from physical Table (Swap and pop on byte arrays)
             if (table != nullptr) {
                 size_t rowToDelete = record.row;
                 size_t lastRow = table->tableEntities.size() - 1;
@@ -181,20 +173,17 @@ struct Manager {
             }
         }
 
-        // 1. Logical Group Move
         if (currentArchtype) removeEntityFromArchetype(currentArchtype, entity);
         nextArchtype->entities.push_back(entity);
 
         Table *oldTable = currentArchtype ? currentArchtype->dataTable : nullptr;
         Table *newTable = nextArchtype->dataTable;
 
-        // --- THE HOLY GRAIL: ZERO COST TAG SWITCH ---
         if (oldTable == newTable) {
             record.archetype = nextArchtype;
-            return; // No memory moved!
+            return;
         }
 
-        // 2. Physical Data Move
         size_t newRow = newTable->tableEntities.size();
         newTable->tableEntities.push_back(entity);
 
@@ -255,13 +244,11 @@ struct Manager {
     void addComponents(EntityId entity, const Ts *...initialValues) {
         static_assert(sizeof...(Ts) > 0, "Must add at least one component.");
 
-        // 1. Register component sizes
         ((component_size[ComponentID<Ts>::_id] = std::is_empty_v<Ts> ? 0 : sizeof(Ts)), ...);
 
         Record &record = entity_index[entity];
         Archetype *currentArchtype = record.archetype;
 
-        // 2. Calculate the FINAL destination signature instantly using a fold expression
         ArchSignature_t targetSignature;
         if (currentArchtype != nullptr) {
             targetSignature = currentArchtype->typeSet;
@@ -270,9 +257,7 @@ struct Manager {
 
         Archetype *nextArchtype = getOrCreateArchetype(targetSignature);
 
-        // 3. Edge Case: The entity already has all these components!
         if (currentArchtype == nextArchtype) {
-            // Just update the values if pointers were provided
             (
                 [&]() {
                     if (initialValues != nullptr && !std::is_empty_v<Ts>) {
@@ -286,7 +271,6 @@ struct Manager {
             return;
         }
 
-        // 4. Logical Group Move (Fast)
         if (currentArchtype != nullptr) {
             removeEntityFromArchetype(currentArchtype, entity);
         }
@@ -295,14 +279,12 @@ struct Manager {
         Table *oldTable = currentArchtype ? currentArchtype->dataTable : nullptr;
         Table *newTable = nextArchtype->dataTable;
 
-        // --- ZERO COST TAG SWITCH ---
-        // If we only added tags (0-byte components), the table doesn't change!
+        
         if (oldTable == newTable) {
             record.archetype = nextArchtype;
-            return; // We skip the physical move entirely!
+            return;
         }
 
-        // 5. Physical Data Move (We only do this ONCE for all new components)
         size_t newRow = newTable->tableEntities.size();
         newTable->tableEntities.push_back(entity);
 
@@ -312,7 +294,6 @@ struct Manager {
             newTable->components[col].resize((newRow + 1) * compSize);
         }
 
-        // Copy existing intersection data from the old table
         if (oldTable != nullptr) {
             size_t oldRow = record.row;
 
@@ -327,7 +308,6 @@ struct Manager {
                             compSize);
             }
 
-            // Swap and Pop in the old table
             size_t lastRow = oldTable->tableEntities.size() - 1;
             EntityId lastEntity = oldTable->tableEntities.back();
 
@@ -351,7 +331,6 @@ struct Manager {
             oldTable->tableEntities.pop_back();
         }
 
-        // 6. Initialize the brand new components
         (
             [&]() {
                 if (initialValues != nullptr && !std::is_empty_v<Ts>) {
@@ -404,7 +383,6 @@ struct Manager {
         Table *oldTable = currentArchtype->dataTable;
         Table *newTable = nextArchtype ? nextArchtype->dataTable : nullptr;
 
-        // --- ZERO COST TAG SWITCH ---
         if (oldTable == newTable) {
             record.archetype = nextArchtype;
             return; 
@@ -495,7 +473,6 @@ struct Manager {
         Table *oldTable = currentArchetype->dataTable;
         Table *newTable = withDstArch->dataTable;
 
-        // --- ZERO COST TAG SWITCH ---
         if (oldTable == newTable) {
             record.archetype = withDstArch;
             return; 
@@ -585,14 +562,12 @@ struct Manager {
                 if (arch->entities.empty()) continue;
                 Table *table = arch->dataTable;
 
-                // Cache the base pointers of the arrays inside the Table
                 const std::tuple<Filtered *...> basePointers = {
                     reinterpret_cast<Filtered *>(
                         table->components[table_column_index[ComponentID<Filtered>::_id][table->id]].data()
                     )...
                 };
 
-                // Iterate over the logical entities, fetching their exact row in the shared Table
                 for (EntityId e : arch->entities) {
                     size_t physRow = entity_index[e].row;
                     std::apply([&](auto *...compArray) {
@@ -651,7 +626,6 @@ struct Manager {
         newArchtype.typeSet = signature;
         archetypeIdIndex[newId] = &newArchtype;
 
-        // Generate the Table signature by filtering out tags (0-byte components)
         TableSignature_t tableSig;
         size_t trueSize = 0;
         for (size_t i = 0; i < MAX_COMPONENTS; ++i) {
