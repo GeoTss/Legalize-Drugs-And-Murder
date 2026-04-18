@@ -127,6 +127,7 @@ int main() {
     manager.addComponent<AnimationStateComponent>(hunter, &animationComponent);
     StateComponent stateComp = {.stateID = (uint8_t)hunterStates::IDLE};
     manager.addComponent<StateComponent>(hunter, &stateComp);
+    
     SetTargetFPS(60);
 
     while (!WindowShouldClose()) {
@@ -207,7 +208,8 @@ int main() {
                     hitboxEntity);
                 manager.setComponent<LifespanComponent>(hitboxEntity, lifespanComp);
                 manager.setComponent<HitboxComponent>(hitboxEntity, hitboxComp);
-            });
+            }
+        );
 
         manager.runSystem<HitboxComponent>([](HitboxComponent &hitbox) {
             DrawRectangleLines(hitbox.x, hitbox.y, hitbox.width, hitbox.height, YELLOW);

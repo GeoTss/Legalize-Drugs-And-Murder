@@ -4,6 +4,8 @@
 
 #include "Component.hpp"
 #include "Entity.hpp"
+#include "Table.hpp"
+
 #include <cstddef>
 #include <ostream>
 #include <unordered_map>
@@ -12,15 +14,9 @@
 
 using ArchetypeId = std::uint16_t;
 
-constexpr size_t MAX_COMPONENTS = 64;
 using ArchSignature_t = std::bitset<MAX_COMPONENTS>;
 
 struct Archetype;
-
-struct Column {
-    std::vector<std::byte> data;
-    size_t elementSize;
-};
 
 struct ArchetypeEdge {
     Archetype *add = nullptr;
@@ -29,12 +25,14 @@ struct ArchetypeEdge {
     std::unordered_map<ComponentId, Archetype *> replace;
 };
 
+// For components + tags representation
 struct Archetype {
 
     std::unordered_map<ComponentId, ArchetypeEdge> edges;
     ArchSignature_t typeSet;
-    std::vector<ComponentId> componentIds;
-    std::vector<std::vector<std::byte>> components;
+    
+    Table* dataTable;
+
     std::vector<EntityId> entities;
 
     ArchetypeId id;
@@ -45,23 +43,6 @@ struct Archetype {
 
     friend std::ostream &operator<<(std::ostream &os, const Archetype &arch) {
         os << "Entity count: " << arch.entities.size() << '\n';
-
-        os << "Component count: " << arch.typeSet.size() << '\n';
-        os << "Component Ids: [ ";
-        for (const auto cid : arch.componentIds) {
-            os << cid << ' ';
-        }
-        os << "]\n";
-
-        size_t totalArchCompSize = 0;
-        os << "Component row sizes: [ ";
-        for (const auto &componentRow : arch.components) {
-            os << componentRow.size() << ' ';
-            totalArchCompSize += componentRow.size();
-        }
-        os << "]\n";
-
-        os << "Total size of components: " << totalArchCompSize << " bytes\n";
 
         return os;
     }
