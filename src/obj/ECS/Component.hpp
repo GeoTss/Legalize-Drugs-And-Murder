@@ -69,7 +69,11 @@ struct StateComponent{
     uint8_t stateID;
 };
 
+
 struct MainPlayerTag{};
+struct IdleStateTag{};
+struct RunningStateTag{};
+struct AttackingStateTag{};
 
 struct DamageEnemiesTag {};
 struct DamageCharacterTag {};

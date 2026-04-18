@@ -4,16 +4,16 @@
 
 #include <algorithm>
 #include <concepts>
+#include <cstring>
 #include <functional>
 #include <tuple>
 #include <type_traits>
 #include <unordered_map>
-#include <cstring>
 
 #include "Archetype.hpp"
-#include "Table.hpp"
 #include "Component.hpp"
 #include "Entity.hpp"
+#include "Table.hpp"
 
 template <typename... Ts> struct TypeList {};
 template <typename L1, typename L2> struct ConcatLists;
@@ -22,13 +22,14 @@ template <typename... Ts, typename... Ys> struct ConcatLists<TypeList<Ts...>, Ty
 };
 
 template <typename... Ts> struct FilterEmpty;
-template <> struct FilterEmpty<> { using type = TypeList<>; };
+template <> struct FilterEmpty<> {
+    using type = TypeList<>;
+};
 
 template <typename T, typename... Rest> struct FilterEmpty<T, Rest...> {
-    using type = typename ConcatLists<
-        std::conditional_t<std::is_empty_v<T>, TypeList<>, TypeList<T>>,
-        typename FilterEmpty<Rest...>::type
-    >::type;
+    using type =
+        typename ConcatLists<std::conditional_t<std::is_empty_v<T>, TypeList<>, TypeList<T>>,
+                             typename FilterEmpty<Rest...>::type>::type;
 };
 
 struct Record {
@@ -42,13 +43,13 @@ struct Manager {
 
     std::unordered_map<ComponentId, size_t> component_size;
     std::unordered_map<EntityId, Record> entity_index;
-    
+
     std::unordered_map<ArchSignature_t, Archetype> archetype_index;
     std::unordered_map<ArchetypeId, Archetype *> archetypeIdIndex;
-    
+
     std::unordered_map<TableSignature_t, Table> table_index;
     std::unordered_map<TableID, Table *> tableIdIndex;
-    
+
     std::unordered_map<ComponentId, std::unordered_map<TableID, size_t>> table_column_index;
 
     EntityId entityIdCount = 0;
@@ -64,7 +65,8 @@ struct Manager {
 
     void destroyEntity(EntityId entity) {
         auto it = entity_index.find(entity);
-        if (it == entity_index.end()) return;
+        if (it == entity_index.end())
+            return;
 
         Record record = it->second;
 
@@ -84,7 +86,7 @@ struct Manager {
 
                 if (rowToDelete != lastRow) {
                     EntityId entityToMove = table->tableEntities[lastRow];
-                    
+
                     table->tableEntities[rowToDelete] = entityToMove;
                     entity_index[entityToMove].row = rowToDelete;
 
@@ -112,14 +114,17 @@ struct Manager {
     }
 
     template <typename T> T *getComponent(EntityId entity) {
-        if constexpr (std::is_empty_v<T>) return nullptr;
+        if constexpr (std::is_empty_v<T>)
+            return nullptr;
         static const ComponentId component = ComponentID<T>::_id;
 
         Record &record = entity_index[entity];
-        if (!record.archetype || !record.archetype->dataTable) return nullptr;
+        if (!record.archetype || !record.archetype->dataTable)
+            return nullptr;
 
         Table *table = record.archetype->dataTable;
-        if (!table->signature.test(component)) return nullptr;
+        if (!table->signature.test(component))
+            return nullptr;
 
         size_t col = table_column_index[component][table->id];
         return (T *)&table->components[col][record.row * sizeof(T)];
@@ -133,13 +138,12 @@ struct Manager {
         return (T &)table->components[col][record.row * sizeof(T)];
     }
 
-    Archetype *getArchetype(EntityId entity) {
-        return entity_index[entity].archetype;
-    }
+    Archetype *getArchetype(EntityId entity) { return entity_index[entity].archetype; }
 
     template <typename T> void setComponent(EntityId entity, T &component) {
         T *toSetComp = getComponent<T>(entity);
-        if (toSetComp != nullptr) std::memcpy(toSetComp, (void *)&component, sizeof(T));
+        if (toSetComp != nullptr)
+            std::memcpy(toSetComp, (void *)&component, sizeof(T));
     }
 
     template <typename T>
@@ -149,7 +153,8 @@ struct Manager {
         static const ComponentId component = ComponentID<T>::_id;
         static const size_t componentSize = std::is_empty_v<T> ? 0 : sizeof(T);
 
-        if (has_component(entity, component)) return;
+        if (has_component(entity, component))
+            return;
         component_size[component] = componentSize;
 
         Record &record = entity_index[entity];
@@ -173,7 +178,8 @@ struct Manager {
             }
         }
 
-        if (currentArchtype) removeEntityFromArchetype(currentArchtype, entity);
+        if (currentArchtype)
+            removeEntityFromArchetype(currentArchtype, entity);
         nextArchtype->entities.push_back(entity);
 
         Table *oldTable = currentArchtype ? currentArchtype->dataTable : nullptr;
@@ -197,7 +203,8 @@ struct Manager {
             size_t oldRow = record.row;
 
             for (ComponentId cid : oldTable->componentIds) {
-                if (!newTable->signature.test(cid)) continue;
+                if (!newTable->signature.test(cid))
+                    continue;
                 size_t compSize = component_size[cid];
                 size_t oldCol = table_column_index[cid][oldTable->id];
                 size_t newCol = table_column_index[cid][newTable->id];
@@ -232,16 +239,15 @@ struct Manager {
 
         if (initialValue != nullptr && !std::is_empty_v<T>) {
             size_t newCol = table_column_index[component][newTable->id];
-            std::memcpy(&newTable->components[newCol][newRow * sizeof(T)],
-                        (void *)initialValue, sizeof(T));
+            std::memcpy(
+                &newTable->components[newCol][newRow * sizeof(T)], (void *)initialValue, sizeof(T));
         }
 
         record.archetype = nextArchtype;
         record.row = newRow;
     }
 
-    template <typename... Ts> 
-    void addComponents(EntityId entity, const Ts *...initialValues) {
+    template <typename... Ts> void addComponents(EntityId entity, const Ts *...initialValues) {
         static_assert(sizeof...(Ts) > 0, "Must add at least one component.");
 
         ((component_size[ComponentID<Ts>::_id] = std::is_empty_v<Ts> ? 0 : sizeof(Ts)), ...);
@@ -261,10 +267,12 @@ struct Manager {
             (
                 [&]() {
                     if (initialValues != nullptr && !std::is_empty_v<Ts>) {
-                        size_t col = table_column_index[ComponentID<Ts>::_id][nextArchtype->dataTable->id];
-                        std::memcpy(&nextArchtype->dataTable->components[col][record.row * sizeof(Ts)],
-                                    (void *)initialValues,
-                                    sizeof(Ts));
+                        size_t col =
+                            table_column_index[ComponentID<Ts>::_id][nextArchtype->dataTable->id];
+                        std::memcpy(
+                            &nextArchtype->dataTable->components[col][record.row * sizeof(Ts)],
+                            (void *)initialValues,
+                            sizeof(Ts));
                     }
                 }(),
                 ...);
@@ -279,7 +287,6 @@ struct Manager {
         Table *oldTable = currentArchtype ? currentArchtype->dataTable : nullptr;
         Table *newTable = nextArchtype->dataTable;
 
-        
         if (oldTable == newTable) {
             record.archetype = nextArchtype;
             return;
@@ -298,7 +305,8 @@ struct Manager {
             size_t oldRow = record.row;
 
             for (ComponentId cid : oldTable->componentIds) {
-                if (!newTable->signature.test(cid)) continue;
+                if (!newTable->signature.test(cid))
+                    continue;
                 size_t compSize = component_size[cid];
                 size_t oldCol = table_column_index[cid][oldTable->id];
                 size_t newCol = table_column_index[cid][newTable->id];
@@ -347,8 +355,7 @@ struct Manager {
         record.row = newRow;
     }
 
-    template <typename... Components> 
-    void addComponents(EntityId entity) {
+    template <typename... Components> void addComponents(EntityId entity) {
         static_assert(sizeof...(Components) > 0, "Must add at least one component.");
         addComponents<Components...>(entity, static_cast<const Components *>(nullptr)...);
     }
@@ -356,11 +363,13 @@ struct Manager {
     template <typename T> void removeComponent(EntityId entity) {
         static const ComponentId component = ComponentID<T>::_id;
 
-        if (!has_component(entity, component)) return;
+        if (!has_component(entity, component))
+            return;
 
         Record &record = entity_index[entity];
         Archetype *currentArchtype = record.archetype;
-        if (currentArchtype == nullptr) return;
+        if (currentArchtype == nullptr)
+            return;
 
         Archetype *nextArchtype = nullptr;
         ArchetypeEdge &edge = currentArchtype->edges[component];
@@ -378,14 +387,15 @@ struct Manager {
         }
 
         removeEntityFromArchetype(currentArchtype, entity);
-        if (nextArchtype) nextArchtype->entities.push_back(entity);
+        if (nextArchtype)
+            nextArchtype->entities.push_back(entity);
 
         Table *oldTable = currentArchtype->dataTable;
         Table *newTable = nextArchtype ? nextArchtype->dataTable : nullptr;
 
         if (oldTable == newTable) {
             record.archetype = nextArchtype;
-            return; 
+            return;
         }
 
         size_t newRow = 0;
@@ -404,7 +414,8 @@ struct Manager {
 
         if (newTable != nullptr) {
             for (ComponentId cid : oldTable->componentIds) {
-                if (cid == component || !newTable->signature.test(cid)) continue;
+                if (cid == component || !newTable->signature.test(cid))
+                    continue;
                 size_t compSize = component_size[cid];
                 size_t oldCol = table_column_index[cid][oldTable->id];
                 size_t newCol = table_column_index[cid][newTable->id];
@@ -450,7 +461,9 @@ struct Manager {
         static const ComponentId srcId = ComponentID<_SrcComp>::_id;
         static const ComponentId dstId = ComponentID<_DstComp>::_id;
 
-        if (currentArchetype == nullptr || !has_component(entity, srcId) || has_component(entity, dstId)) return;
+        if (currentArchetype == nullptr || !has_component(entity, srcId) ||
+            has_component(entity, dstId))
+            return;
 
         component_size[dstId] = std::is_empty_v<_DstComp> ? 0 : sizeof(_DstComp);
 
@@ -475,12 +488,12 @@ struct Manager {
 
         if (oldTable == newTable) {
             record.archetype = withDstArch;
-            return; 
+            return;
         }
 
         size_t newRow = newTable->tableEntities.size();
         newTable->tableEntities.push_back(entity);
-        
+
         for (ComponentId cid : newTable->componentIds) {
             size_t compSize = component_size[cid];
             size_t col = table_column_index[cid][newTable->id];
@@ -490,7 +503,8 @@ struct Manager {
         size_t oldRow = record.row;
 
         for (ComponentId cid : oldTable->componentIds) {
-            if (cid == srcId || !newTable->signature.test(cid)) continue;
+            if (cid == srcId || !newTable->signature.test(cid))
+                continue;
             size_t compSize = component_size[cid];
             size_t oldCol = table_column_index[cid][oldTable->id];
             size_t newCol = table_column_index[cid][newTable->id];
@@ -503,7 +517,8 @@ struct Manager {
         if (initialValue != nullptr && !std::is_empty_v<_DstComp>) {
             size_t newCol = table_column_index[dstId][newTable->id];
             std::memcpy(&newTable->components[newCol][newRow * sizeof(_DstComp)],
-                        initialValue, sizeof(_DstComp));
+                        initialValue,
+                        sizeof(_DstComp));
         }
 
         size_t lastRow = oldTable->tableEntities.size() - 1;
@@ -534,45 +549,58 @@ struct Manager {
 
     bool has_component(EntityId entity, ComponentId component) {
         Archetype *archetype = entity_index[entity].archetype;
-        if (archetype == nullptr) return false;
+        if (archetype == nullptr)
+            return false;
         return archetype->typeSet.test(component);
     }
 
     template <typename... Components> std::vector<Archetype *> queryArchtypes() {
-        ArchSignature_t querySig;
-        (querySig.set(ComponentID<Components>::_id), ...);
-        std::vector<Archetype *> queryRes;
+        static ArchSignature_t querySig;
+        static bool initialized = false;
+        static std::vector<Archetype *> queryRes;
+        static size_t lastArchetypeCount = 0;
 
-        for (auto &[archId, arch] : archetypeIdIndex) {
-            if ((arch->typeSet & querySig) == querySig) {
-                queryRes.push_back(arch);
+        if (!initialized) {
+            (querySig.set(ComponentID<Components>::_id), ...);
+            initialized = true;
+        }
+        if (lastArchetypeCount != archetypeIdCount) {
+            queryRes.clear();
+            
+            for (auto &[archId, arch] : archetypeIdIndex) {
+                if ((arch->typeSet & querySig) == querySig) {
+                    queryRes.push_back(arch);
+                }
             }
+            lastArchetypeCount = archetypeIdCount;
         }
         return queryRes;
     }
 
     template <typename... Components, typename Func> void runSystem(Func &&systemFunction) {
-        if constexpr (sizeof...(Components) == 0) return;
+        if constexpr (sizeof...(Components) == 0)
+            return;
 
         using FilteredList = typename FilterEmpty<Components...>::type;
         auto queriedArchetypes = queryArchtypes<Components...>();
 
         auto executeLoops = [&]<typename... Filtered>(TypeList<Filtered...>) {
             for (auto arch : queriedArchetypes) {
-                if (arch->entities.empty()) continue;
+                if (arch->entities.empty())
+                    continue;
                 Table *table = arch->dataTable;
 
-                const std::tuple<Filtered *...> basePointers = {
-                    reinterpret_cast<Filtered *>(
-                        table->components[table_column_index[ComponentID<Filtered>::_id][table->id]].data()
-                    )...
-                };
+                const std::tuple<Filtered *...> basePointers = {reinterpret_cast<Filtered *>(
+                    table->components[table_column_index[ComponentID<Filtered>::_id][table->id]]
+                        .data())...};
 
                 for (EntityId e : arch->entities) {
                     size_t physRow = entity_index[e].row;
-                    std::apply([&](auto *...compArray) {
-                        systemFunction(compArray[physRow]...);
-                    }, basePointers);
+                    std::apply(
+                        [&](auto *...compArray) {
+                            systemFunction(compArray[physRow]...);
+                        },
+                        basePointers);
                 }
             }
         };
@@ -580,11 +608,10 @@ struct Manager {
         executeLoops(FilteredList{});
     }
 
-    template<typename... Ts>
-    View<Ts...> view();
+    template <typename... Ts> View<Ts...> view();
 
   private:
-    void removeEntityFromArchetype(Archetype* arch, EntityId entity) {
+    void removeEntityFromArchetype(Archetype *arch, EntityId entity) {
         auto it = std::find(arch->entities.begin(), arch->entities.end(), entity);
         if (it != arch->entities.end()) {
             *it = arch->entities.back();
@@ -594,12 +621,13 @@ struct Manager {
 
     Table *getOrCreateTable(const TableSignature_t &signature) {
         auto it = table_index.find(signature);
-        if (it != table_index.end()) return &it->second;
+        if (it != table_index.end())
+            return &it->second;
 
         TableID newId = tableIdCount++;
         auto [insertedIt, success] = table_index.try_emplace(signature, Table{newId});
         Table &newTable = insertedIt->second;
-        
+
         newTable.signature = signature;
         tableIdIndex[newId] = &newTable;
 
@@ -610,14 +638,15 @@ struct Manager {
                 table_column_index[i][newId] = col++;
             }
         }
-        
+
         newTable.components.resize(newTable.componentIds.size());
         return &newTable;
     }
 
     Archetype *getOrCreateArchetype(const ArchSignature_t &signature) {
         auto archIt = archetype_index.find(signature);
-        if (archIt != archetype_index.end()) return &archIt->second;
+        if (archIt != archetype_index.end())
+            return &archIt->second;
 
         ArchetypeId newId = archetypeIdCount++;
         auto [insertedIt, success] = archetype_index.try_emplace(signature, Archetype{newId});
