@@ -36,18 +36,13 @@ using namespace std::chrono_literals;
 struct AnimationSystem {
     static void
     update(Manager &manager, SpriteManager &spriteManager, EventDispatcher &dispatcher, float dt) {
-        auto view = manager.view<TransformComponent, AnimationStateComponent>();
-
-        for (auto entity : view) {
-            auto &transform = view.get<TransformComponent>(entity);
-            auto &anim = view.get<AnimationStateComponent>(entity);
-            auto &stateComponent = view.get<StateComponent>(entity);
-
+        manager.runSystem<TransformComponent, AnimationStateComponent, StateComponent>([&manager, &spriteManager, &dispatcher, dt](EntityId entity, TransformComponent& transform, AnimationStateComponent& anim, StateComponent& stateComponent){
+            
             uint8_t currentState = stateComponent.stateID;
 
             if (anim.profile == nullptr ||
                 !anim.profile->stateAnimations.contains(currentState))
-                continue;
+                return;
 
             const AnimationTrack &track = anim.profile->stateAnimations[currentState];
 
@@ -100,7 +95,7 @@ struct AnimationSystem {
             Vector2 origin = {(float)track.frameWidth / 2.0f, (float)track.frameHeight / 2.0f};
 
             DrawTexturePro(track.texture, sourceRec, destRec, origin, 0.0f, WHITE);
-        }
+        });
     }
 };
 

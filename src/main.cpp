@@ -9,7 +9,7 @@
 #include <raylib.h>
 #include <raymath.h>
 
-enum struct hunterStates { IDLE, RUNNING, ATTACKING };
+enum struct hunterStates : uint8_t { IDLE, RUNNING, ATTACKING };
 
 enum struct eventIDs { LIGHT_ATTACK, LIGHTNING };
 
@@ -54,69 +54,16 @@ void updateEvents(Manager &manager, const Func &&callback) {
     auto view = manager.view<AnimationEventComponent, EventTags...>();
 
     for (auto entity : view) {
+        std::cout << "(" << getEntityIndex(entity) << ", " << getEntityGeneration(entity) << ")" << "\n";
         callback(manager, entity);
     }
 }
-
-// void updatePlayerStates(Manager& manager){
-
-// }
 
 int main() {
 
     std::cout << "Your asset path: " << ASSET_PATH << "\n";
 
-    std::cout << "Position component ID: " << ComponentID<TransformComponent>::_id << "\n";
-    std::cout << "AnimationStateComponent ID: " << ComponentID<AnimationStateComponent>::_id
-              << "\n";
-    std::cout << "Health component ID: " << ComponentID<HealthComponent>::_id << "\n";
-    std::cout << "NothingEffectTag component ID: " << ComponentID<NothingEffectTag>::_id << "\n";
-    std::cout << "PoisonEffectTag component ID: " << ComponentID<PoisonEffectTag>::_id << "\n\n";
-
     Manager manager;
-
-    auto hunter = manager.addEntity();
-
-    manager.addComponent<MainPlayerTag>(hunter);
-
-    manager.addComponent<TransformComponent>(hunter);
-    TransformComponent transformComp = {{100, 100}};
-    manager.setComponent<TransformComponent>(hunter, transformComp);
-
-    HealthComponent healthComp = {.health = 100.f};
-    manager.addComponent<HealthComponent>(hunter, &healthComp);
-
-    manager.addComponent<NothingEffectTag>(hunter);
-
-    std::cout << *manager.getArchetype(hunter) << "\n";
-
-    HealthComponent *hunterHealth = manager.getComponent<HealthComponent>(hunter);
-    std::cout << "Hunter's health before poison: " << hunterHealth->health << "\n";
-
-    manager.replaceComponent<NothingEffectTag, PoisonEffectTag>(hunter);
-
-    manager.runSystem<HealthComponent, PoisonEffectTag>([](HealthComponent &_health) {
-        _health.health -= 10.f;
-    });
-
-    hunterHealth = manager.getComponent<HealthComponent>(hunter);
-    std::cout << "Hunter's health after poison: " << hunterHealth->health << "\n";
-
-    std::cout << *manager.getArchetype(hunter) << "\n";
-
-    manager.removeComponent<PoisonEffectTag>(hunter);
-
-    std::cout << *manager.getArchetype(hunter) << "\n";
-
-    manager.runSystem<HealthComponent, PoisonEffectTag>([](HealthComponent &_health) {
-        _health.health -= 10.f;
-    });
-
-    hunterHealth = manager.getComponent<HealthComponent>(hunter);
-    std::cout << "Hunter's health after removing poison effect: " << hunterHealth->health << "\n";
-
-    StatsComponent stats = {.attackPower = 10.f, .hitboxScale = 1.f, .speed = 100.f};
-    manager.addComponent<StatsComponent>(hunter, &stats);
 
     InitWindow(800, 600, "My ECS Game");
 
@@ -125,14 +72,27 @@ int main() {
 
     initializeAnimations(manager, spriteManager, eventDispatcher);
 
+    auto hunter = manager.addEntity();
+
+    manager.addComponent<MainPlayerTag>(hunter);
+
+    TransformComponent transformComp = {{100, 100}};
+    HealthComponent healthComp = {.health = 100.f};
+    StatsComponent stats = {.attackPower = 10.f, .hitboxScale = 1.f, .speed = 100.f};
+    StateComponent stateComp = {.stateID = (uint8_t)hunterStates::IDLE};
+
     AnimationStateComponent animationComponent = {0};
     animationComponent.profile = spriteManager.getProfile("main");
 
-    manager.addComponent<AnimationStateComponent>(hunter, &animationComponent);
-    StateComponent stateComp = {.stateID = (uint8_t)hunterStates::IDLE};
-    manager.addComponent<StateComponent>(hunter, &stateComp);
+    manager.addComponents<TransformComponent,
+                          HealthComponent,
+                          StatsComponent,
+                          StateComponent,
+                          AnimationStateComponent>(
+        hunter, &transformComp, &healthComp, &stats, &stateComp, &animationComponent);
 
     manager.addComponent<PlayerInput>(hunter);
+    manager.addComponent<IdleStateTag>(hunter);
 
     SetTargetFPS(60);
 
@@ -287,16 +247,18 @@ int main() {
 
         std::vector<EntityId> entitiesToDestroy;
 
-        manager.runSystem<LifespanComponent>([&entitiesToDestroy, dt](EntityId timedEntity, LifespanComponent &lifespan) {
-            lifespan.duration -= dt;
+        manager.runSystem<LifespanComponent>(
+            [&entitiesToDestroy, dt](EntityId timedEntity, LifespanComponent &lifespan) {
+                lifespan.duration -= dt;
 
-            if (lifespan.duration <= 0)
-                entitiesToDestroy.push_back(timedEntity);
-        });
+                if (lifespan.duration <= 0)
+                    entitiesToDestroy.push_back(timedEntity);
+            });
 
-        manager.runSystem<AnimationEventComponent>([&entitiesToDestroy](EntityId eventEntity, AnimationEventComponent& eventComp){
-            entitiesToDestroy.push_back(eventEntity);
-        });
+        manager.runSystem<AnimationEventComponent>(
+            [&entitiesToDestroy](EntityId eventEntity, AnimationEventComponent &eventComp) {
+                entitiesToDestroy.push_back(eventEntity);
+            });
 
         for (auto entity : entitiesToDestroy) {
             manager.destroyEntity(entity);

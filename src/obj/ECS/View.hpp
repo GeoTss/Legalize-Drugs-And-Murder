@@ -63,8 +63,8 @@ template <typename... Components> struct View {
 
     Iterator end() const { return Iterator(&matchedArchetypes, matchedArchetypes.size(), 0); }
 
-    template <typename T> T &get(EntityId entity) { 
-        return manager->getComponentSure<T>(entity);
+    template <typename T> T* get(EntityId entity) { 
+        return manager->getComponent<T>(entity);
     }
 };
 

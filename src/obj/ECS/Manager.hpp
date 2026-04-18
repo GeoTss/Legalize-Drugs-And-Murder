@@ -33,8 +33,9 @@ template <typename T, typename... Rest> struct FilterEmpty<T, Rest...> {
 };
 
 struct Record {
-    Archetype *archetype;
-    size_t row;
+    Archetype *archetype = nullptr;
+    size_t row = -1;
+    uint32_t generation : 12;
 };
 
 template <typename... Components> struct View;
@@ -42,7 +43,8 @@ template <typename... Components> struct View;
 struct Manager {
 
     std::unordered_map<ComponentId, size_t> component_size;
-    std::unordered_map<EntityId, Record> entity_index;
+    std::vector<Record> entity_index;
+    std::vector<EntityId> freeEnttIds;
 
     std::unordered_map<ArchSignature_t, Archetype> archetype_index;
     std::unordered_map<ArchetypeId, Archetype *> archetypeIdIndex;
@@ -57,18 +59,44 @@ struct Manager {
     TableID tableIdCount = 0;
 
     EntityId addEntity() {
-        EntityId newId = entityIdCount++;
-        Record record = {.archetype = nullptr, .row = 0};
-        entity_index[newId] = record;
+        uint32_t index;
+        uint32_t generation;
+
+        if (!freeEnttIds.empty()) {
+            index = freeEnttIds.back();
+            freeEnttIds.pop_back();
+
+            generation = entity_index[index].generation;
+        } else {
+            index = entityIdCount++;
+            generation = 0;
+            if (index >= entity_index.size()) {
+                entity_index.resize(index + 1000);
+            }
+        }
+
+        EntityId newId = createEntityId(index, generation);
+
+        entity_index[index].archetype = nullptr;
+        entity_index[index].row = 0;
+
         return newId;
+    }
+    bool isEntityValid(EntityId entity) {
+        uint32_t index = getEntityIndex(entity);
+
+        if (index >= entity_index.size())
+            return false;
+
+        return entity_index[index].generation == getEntityGeneration(entity);
     }
 
     void destroyEntity(EntityId entity) {
-        auto it = entity_index.find(entity);
-        if (it == entity_index.end())
+        if (!isEntityValid(entity))
             return;
 
-        Record record = it->second;
+        uint32_t index = getEntityIndex(entity);
+        Record &record = entity_index[index];
 
         if (record.archetype != nullptr) {
             Archetype *arch = record.archetype;
@@ -85,10 +113,13 @@ struct Manager {
                 size_t lastRow = table->tableEntities.size() - 1;
 
                 if (rowToDelete != lastRow) {
+
                     EntityId entityToMove = table->tableEntities[lastRow];
 
+                    uint32_t moveToIdx = getEntityIndex(entityToMove);
+
                     table->tableEntities[rowToDelete] = entityToMove;
-                    entity_index[entityToMove].row = rowToDelete;
+                    entity_index[moveToIdx].row = rowToDelete;
 
                     for (ComponentId cid : table->componentIds) {
                         size_t compSize = component_size[cid];
@@ -110,7 +141,13 @@ struct Manager {
             }
         }
 
-        entity_index.erase(it);
+        record.archetype = nullptr;
+        record.row = 0;
+
+        if(record.generation < 4095){
+            record.generation++;
+            freeEnttIds.push_back(index);
+        }
     }
 
     template <typename T> T *getComponent(EntityId entity) {
@@ -118,7 +155,12 @@ struct Manager {
             return nullptr;
         static const ComponentId component = ComponentID<T>::_id;
 
-        Record &record = entity_index[entity];
+        if (!isEntityValid(entity))
+            return nullptr;
+
+        uint32_t index = getEntityIndex(entity);
+        Record &record = entity_index[index];
+
         if (!record.archetype || !record.archetype->dataTable)
             return nullptr;
 
@@ -129,16 +171,6 @@ struct Manager {
         size_t col = table_column_index[component][table->id];
         return (T *)&table->components[col][record.row * sizeof(T)];
     }
-
-    template <typename T> T &getComponentSure(EntityId entity) {
-        static const ComponentId component = ComponentID<T>::_id;
-        Record &record = entity_index[entity];
-        Table *table = record.archetype->dataTable;
-        size_t col = table_column_index[component][table->id];
-        return (T &)table->components[col][record.row * sizeof(T)];
-    }
-
-    Archetype *getArchetype(EntityId entity) { return entity_index[entity].archetype; }
 
     template <typename T> void setComponent(EntityId entity, T &component) {
         T *toSetComp = getComponent<T>(entity);
@@ -157,7 +189,12 @@ struct Manager {
             return;
         component_size[component] = componentSize;
 
-        Record &record = entity_index[entity];
+        if (!isEntityValid(entity))
+            return;
+
+        uint32_t index = getEntityIndex(entity);
+        Record &record = entity_index[index];
+
         Archetype *currentArchtype = record.archetype;
         Archetype *nextArchtype = nullptr;
 
@@ -225,7 +262,11 @@ struct Manager {
                                 &oldTable->components[col][lastRow * compSize],
                                 compSize);
                 }
-                entity_index[lastEntity].row = oldRow;
+
+                uint32_t lastEntityIdx = getEntityIndex(lastEntity);
+                entity_index[lastEntityIdx].row = oldRow;
+
+                entity_index[lastEntityIdx].row = oldRow;
                 oldTable->tableEntities[oldRow] = lastEntity;
             }
 
@@ -252,7 +293,12 @@ struct Manager {
 
         ((component_size[ComponentID<Ts>::_id] = std::is_empty_v<Ts> ? 0 : sizeof(Ts)), ...);
 
-        Record &record = entity_index[entity];
+        if (!isEntityValid(entity))
+            return;
+
+        uint32_t index = getEntityIndex(entity);
+        Record &record = entity_index[index];
+
         Archetype *currentArchtype = record.archetype;
 
         ArchSignature_t targetSignature;
@@ -327,7 +373,9 @@ struct Manager {
                                 &oldTable->components[col][lastRow * compSize],
                                 compSize);
                 }
-                entity_index[lastEntity].row = oldRow;
+                uint32_t lastEntityIdx = getEntityIndex(lastEntity);
+                entity_index[lastEntityIdx].row = oldRow;
+
                 oldTable->tableEntities[oldRow] = lastEntity;
             }
 
@@ -366,7 +414,12 @@ struct Manager {
         if (!has_component(entity, component))
             return;
 
-        Record &record = entity_index[entity];
+        if (!isEntityValid(entity))
+            return;
+
+        uint32_t index = getEntityIndex(entity);
+        Record &record = entity_index[index];
+
         Archetype *currentArchtype = record.archetype;
         if (currentArchtype == nullptr)
             return;
@@ -437,7 +490,9 @@ struct Manager {
                             &oldTable->components[col][lastRow * compSize],
                             compSize);
             }
-            entity_index[lastEntity].row = oldRow;
+            uint32_t lastEntityIdx = getEntityIndex(lastEntity);
+            entity_index[lastEntityIdx].row = oldRow;
+
             oldTable->tableEntities[oldRow] = lastEntity;
         }
 
@@ -456,7 +511,12 @@ struct Manager {
     void replaceComponent(EntityId entity, const _DstComp *initialValue = nullptr) {
         static_assert(ComponentID<_SrcComp>::_id != ComponentID<_DstComp>::_id);
 
-        Record &record = entity_index[entity];
+        if (!isEntityValid(entity))
+            return;
+
+        uint32_t index = getEntityIndex(entity);
+        Record &record = entity_index[index];
+
         Archetype *currentArchetype = record.archetype;
         static const ComponentId srcId = ComponentID<_SrcComp>::_id;
         static const ComponentId dstId = ComponentID<_DstComp>::_id;
@@ -532,7 +592,9 @@ struct Manager {
                             &oldTable->components[col][lastRow * compSize],
                             compSize);
             }
-            entity_index[lastEntity].row = oldRow;
+            uint32_t lastEntityIdx = getEntityIndex(lastEntity);
+            entity_index[lastEntityIdx].row = oldRow;
+
             oldTable->tableEntities[oldRow] = lastEntity;
         }
 
@@ -549,15 +611,24 @@ struct Manager {
 
     template <typename T> bool has_component(EntityId entity) {
         static constexpr size_t component = ComponentID<T>::_id;
+        if (!isEntityValid(entity))
+            return false;
 
-        Archetype *archetype = entity_index[entity].archetype;
+        uint32_t index = getEntityIndex(entity);
+
+        Archetype *archetype = entity_index[index].archetype;
         if (archetype == nullptr)
             return false;
         return archetype->typeSet.test(component);
     }
 
     bool has_component(EntityId entity, ComponentId component) {
-        Archetype *archetype = entity_index[entity].archetype;
+        if (!isEntityValid(entity))
+            return false;
+
+        uint32_t index = getEntityIndex(entity);
+
+        Archetype *archetype = entity_index[index].archetype;
         if (archetype == nullptr)
             return false;
         return archetype->typeSet.test(component);
@@ -615,7 +686,9 @@ struct Manager {
                     .data())...};
 
             for (EntityId e : arch->entities) {
-                size_t physRow = entity_index[e].row;
+                uint32_t index = getEntityIndex(e);
+                size_t physRow = entity_index[index].row;
+
                 std::apply(
                     [&](auto *...compArray) {
                         systemFunction(e, compArray[physRow]...);
@@ -642,7 +715,9 @@ struct Manager {
                     .data())...};
 
             for (EntityId e : arch->entities) {
-                size_t physRow = entity_index[e].row;
+                uint32_t index = getEntityIndex(e);
+                size_t physRow = entity_index[index].row;
+
                 std::apply(
                     [&](auto *...compArray) {
                         systemFunction(compArray[physRow]...);
