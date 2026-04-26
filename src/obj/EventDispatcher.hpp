@@ -58,10 +58,14 @@ template <typename... Tags> constexpr uint64_t hashTags() {
 struct EventDispatcher {
     std::unordered_map<uint64_t, std::function<void(Manager &, const EntityId, const EntityId)>> eventMap;
 
-    template <typename... Tags> uint64_t registerEvent() {
-        constexpr uint64_t hash = hashTags<Tags...>();
+    uint64_t nextEventId = 1;
 
-        eventMap[hash] = [](Manager &manager, const EntityId eventEntity, const EntityId srcEntity) {
+    template <typename... Tags> uint64_t registerEvent() {
+        uint64_t id = nextEventId++;
+
+        // constexpr uint64_t hash = hashTags<Tags...>();
+
+        eventMap[id] = [](Manager &manager, const EntityId eventEntity, const EntityId srcEntity) {
             AnimationEventComponent eventComp = {
                 .sourceEntity = srcEntity};
             
@@ -69,14 +73,15 @@ struct EventDispatcher {
             manager.addComponents<Tags...>(eventEntity);
         };
 
-        return hash;
+        return id;
     }
 
     template <typename T> 
     uint64_t registerPayloadEvent(T payloadData) {
-        constexpr uint64_t hash = hashTags<T>();
+        // constexpr uint64_t hash = hashTags<T>();
+        uint64_t id = nextEventId++;
         
-        eventMap[hash] = [payloadData](Manager &manager, const EntityId eventEntity, const EntityId srcEntity) {
+        eventMap[id] = [payloadData](Manager &manager, const EntityId eventEntity, const EntityId srcEntity) {
             
             AnimationEventComponent eventComp = { .sourceEntity = srcEntity };
             manager.addComponent<AnimationEventComponent>(eventEntity, &eventComp);
@@ -85,7 +90,7 @@ struct EventDispatcher {
             manager.addComponent<T>(eventEntity, &localData);
         };
 
-        return hash;
+        return id;
     }
 
     void dispatchConstruction(Manager &manager, const EntityId eventEntity, const EntityId srcEntity, uint64_t hash) {

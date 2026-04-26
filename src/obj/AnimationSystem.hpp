@@ -22,18 +22,16 @@ constexpr uint32_t HashState(const char *str) {
 }
 
 struct AnimationStateComponent {
-
     AnimationProfile *profile = nullptr;
-
     uint32_t currentFrame = 0;
     float stateTimer = 0.f;
-
     int lastProcessedFrame = -1;
 };
 
 using namespace std::chrono_literals;
 
 struct AnimationSystem {
+    // 1. ADDED Camera3D TO THE ARGUMENTS
     static void
     update(Manager &manager, SpriteManager &spriteManager, EventDispatcher &dispatcher, float dt) {
         manager.runSystem<TransformComponent, AnimationStateComponent, StateComponent>([&manager, &spriteManager, &dispatcher, dt](EntityId entity, TransformComponent& transform, AnimationStateComponent& anim, StateComponent& stateComponent){
@@ -56,8 +54,10 @@ struct AnimationSystem {
                 if (anim.currentFrame >= track.frames.size()) {
                     if (track.loop)
                         anim.currentFrame = 0;
-                    else
+                    else{
                         anim.currentFrame = track.frames.size() - 1;
+                        manager.addComponent<AnimationCompleteTag>(entity);
+                    }
                 }
             }
 

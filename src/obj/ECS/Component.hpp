@@ -78,13 +78,23 @@ struct PlayerInput{
 };
 
 struct MainPlayerTag{};
+struct EnemyTag{};
+
 struct IdleStateTag{};
 struct RunningStateTag{};
 struct AttackingStateTag{};
+struct DamagedStateTag{};
 
 struct DamageEnemiesTag {};
 struct DamageCharacterTag {};
 
-struct HunterLightAttackEventTag {};
+struct AnimationCompleteTag{};
+
+struct TileComponent {
+    Rectangle sourceRect;
+    Vector2 worldPos;
+};
+
+struct SolidWallTag {};
 
 #endif
