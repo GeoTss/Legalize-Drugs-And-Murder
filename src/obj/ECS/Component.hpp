@@ -5,13 +5,9 @@
 #include <stdint.h>
 
 #include "unique_counter.hpp"
+#include "ComponentFamily.hpp"
+#include "ComponentTraits.hpp"
 #include "Entity.hpp"
-
-using ComponentId = uint16_t;
-
-template <typename T> struct ComponentID {
-    static constexpr ComponentId _id = unique_id<T>();
-};
 
 struct TransformComponent {
     Vector2 pos;

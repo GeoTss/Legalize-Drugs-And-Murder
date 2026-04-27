@@ -21,14 +21,12 @@ struct Archetype;
 struct ArchetypeEdge {
     Archetype *add = nullptr;
     Archetype *remove = nullptr;
-
-    std::unordered_map<ComponentId, Archetype *> replace;
 };
 
 // For components + tags representation
 struct Archetype {
 
-    std::unordered_map<ComponentId, ArchetypeEdge> edges;
+    std::array<ArchetypeEdge, MAX_COMPONENTS> edges;
     ArchSignature_t typeSet;
     
     Table* dataTable;
