@@ -16,6 +16,8 @@ struct AnimationTrack {
 
     uint32_t frameWidth;
     uint32_t frameHeight;
+    float trueCenterOffsetX;
+    float trueCenterOffsetY;
 
     std::unordered_map<uint32_t, std::vector<uint64_t>> frameEvents;
 
@@ -29,12 +31,16 @@ struct AnimationTrack {
     AnimationTrack(const std::string _textureFilepath,
                    const uint32_t _width,
                    const uint32_t _height,
+                   const float centerOffX,
+                   const float centerOffY,
                    const std::unordered_map<uint32_t, std::vector<uint64_t>> _frameEvents,
                    const float _frameDuration,
                    const bool _inLoop) {
 
         frameWidth = _width;
         frameHeight = _height;
+        trueCenterOffsetX = centerOffX;
+        trueCenterOffsetY = centerOffY;
         frameEvents = _frameEvents;
         frameDuration = _frameDuration;
         loop = _inLoop;

@@ -34,68 +34,74 @@ struct AnimationSystem {
     // 1. ADDED Camera3D TO THE ARGUMENTS
     static void
     update(Manager &manager, SpriteManager &spriteManager, EventDispatcher &dispatcher, float dt) {
-        manager.runSystem<TransformComponent, AnimationStateComponent, StateComponent>([&manager, &spriteManager, &dispatcher, dt](EntityId entity, TransformComponent& transform, AnimationStateComponent& anim, StateComponent& stateComponent){
-            
-            uint8_t currentState = stateComponent.stateID;
+        manager.runSystem<TransformComponent, AnimationStateComponent, StateComponent>(
+            [&manager, &spriteManager, &dispatcher, dt](EntityId entity,
+                                                        TransformComponent &transform,
+                                                        AnimationStateComponent &anim,
+                                                        StateComponent &stateComponent) {
+                uint8_t currentState = stateComponent.stateID;
 
-            if (anim.profile == nullptr ||
-                !anim.profile->stateAnimations.contains(currentState))
-                return;
+                if (anim.profile == nullptr ||
+                    !anim.profile->stateAnimations.contains(currentState))
+                    return;
 
-            const AnimationTrack &track = anim.profile->stateAnimations[currentState];
+                const AnimationTrack &track = anim.profile->stateAnimations[currentState];
 
-            anim.stateTimer += dt;
+                anim.stateTimer += dt;
 
-            if (anim.stateTimer >= track.frameDuration) {
-                anim.stateTimer = 0;
+                if (anim.stateTimer >= track.frameDuration) {
+                    anim.stateTimer = 0;
 
-                anim.currentFrame += 1;
+                    anim.currentFrame += 1;
 
-                if (anim.currentFrame >= track.frames.size()) {
-                    if (track.loop)
-                        anim.currentFrame = 0;
-                    else{
-                        anim.currentFrame = track.frames.size() - 1;
-                        manager.addComponent<AnimationCompleteTag>(entity);
+                    if (anim.currentFrame >= track.frames.size()) {
+                        if (track.loop)
+                            anim.currentFrame = 0;
+                        else {
+                            anim.currentFrame = track.frames.size() - 1;
+                            manager.addComponent<AnimationCompleteTag>(entity);
+                        }
                     }
                 }
-            }
 
-            if (anim.lastProcessedFrame != anim.currentFrame) {
-                auto eventIter = track.frameEvents.find(anim.currentFrame);
-                if (eventIter != track.frameEvents.end() && !eventIter->second.empty()) {
+                if (anim.lastProcessedFrame != anim.currentFrame) {
+                    auto eventIter = track.frameEvents.find(anim.currentFrame);
+                    if (eventIter != track.frameEvents.end() && !eventIter->second.empty()) {
 
-                    for (auto eventId : eventIter->second) {
+                        for (auto eventId : eventIter->second) {
 
-                        auto eventEntityId = manager.addEntity();
-                        dispatcher.dispatchConstruction(manager, eventEntityId, entity, eventId);
+                            auto eventEntityId = manager.addEntity();
+                            dispatcher.dispatchConstruction(
+                                manager, eventEntityId, entity, eventId);
+                        }
                     }
+                    anim.lastProcessedFrame = anim.currentFrame;
                 }
-                anim.lastProcessedFrame = anim.currentFrame;
-            }
 
-            uint32_t spriteIndex = track.frames[anim.currentFrame];
+                uint32_t spriteIndex = track.frames[anim.currentFrame];
 
-            int columns = track.texture.width / track.frameWidth;
+                int columns = track.texture.width / track.frameWidth;
 
-            float srcX = (spriteIndex % columns) * track.frameWidth;
-            float srcY = (spriteIndex / columns) * track.frameHeight;
+                float srcX = (spriteIndex % columns) * track.frameWidth;
+                float srcY = (spriteIndex / columns) * track.frameHeight;
 
-            Rectangle sourceRec = {srcX, srcY, (float)track.frameWidth, (float)track.frameHeight};
+                Rectangle sourceRec = {
+                    srcX, srcY, (float)track.frameWidth, (float)track.frameHeight};
 
-            if (transform.facingDirection == -1) {
-                sourceRec.width *= -1;
-            }
+                if (transform.facingDirection == -1) {
+                    sourceRec.width *= -1;
+                }
 
-            Rectangle destRec = {transform.pos.x,
-                                 transform.pos.y,
-                                 (float)track.frameWidth,
-                                 (float)track.frameHeight};
+                Rectangle destRec = {transform.pos.x,
+                                     transform.pos.y,
+                                     (float)track.frameWidth,
+                                     (float)track.frameHeight};
 
-            Vector2 origin = {(float)track.frameWidth / 2.0f, (float)track.frameHeight / 2.0f};
+                Vector2 origin = {((float)track.frameWidth / 2.0f) + track.trueCenterOffsetX,
+                                  ((float)track.frameHeight / 2.0f) + track.trueCenterOffsetY};
 
-            DrawTexturePro(track.texture, sourceRec, destRec, origin, 0.0f, WHITE);
-        });
+                DrawTexturePro(track.texture, sourceRec, destRec, origin, 0.0f, WHITE);
+            });
     }
 };
 

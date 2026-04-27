@@ -21,11 +21,11 @@ void initializeCharacterAnimations(Manager &manager,
                                    EventDispatcher &eventDispatcher) {
     spriteManager.createProfile("main");
 
-    AnimationTrack idleTrack{ASSET_PATH "/Blind-Huntress/1 - Idle.png", 240, 128, {}, 0.1f, true};
+    AnimationTrack idleTrack{ASSET_PATH "/Blind-Huntress/1 - Idle.png", 240, 128, 0, 0, {}, 0.1f, true};
 
     spriteManager.addAnimationTrack("main", std::move(idleTrack), (uint32_t)hunterStates::IDLE);
 
-    AnimationTrack runningTrack(ASSET_PATH "/Blind-Huntress/2 - Run.png", 240, 128, {}, 0.1f, true);
+    AnimationTrack runningTrack(ASSET_PATH "/Blind-Huntress/2 - Run.png", 240, 128, 0, 0, {}, 0.1f, true);
 
     spriteManager.addAnimationTrack(
         "main", std::move(runningTrack), (uint32_t)hunterStates::RUNNING);
@@ -46,7 +46,7 @@ void initializeCharacterAnimations(Manager &manager,
     lightAttackEvents[0].push_back(lightAttackEvent);
 
     AnimationTrack lightAttackTrack{
-        ASSET_PATH "/Blind-Huntress/10 - attack 1.png", 240, 128, lightAttackEvents, 0.1f, false};
+        ASSET_PATH "/Blind-Huntress/10 - attack 1.png", 240, 128, 0, 0, lightAttackEvents, 0.1f, false};
 
     spriteManager.addAnimationTrack(
         "main", std::move(lightAttackTrack), (uint32_t)hunterStates::ATTACKING);
@@ -58,13 +58,13 @@ void initializeEnemyAnimations(Manager &manager,
 
     spriteManager.createProfile("enemy");
 
-    AnimationTrack idleTrack{ASSET_PATH "/stormhead/idle.png", 119, 124, {}, 0.1f, true};
+    AnimationTrack idleTrack{ASSET_PATH "/stormhead/idle.png", 119, 124, 7, 40, {}, 0.1f, true};
     spriteManager.addAnimationTrack("enemy", std::move(idleTrack), (uint32_t)enemyStates::IDLE);
 
-    AnimationTrack runningTrack{ASSET_PATH "/stormhead/run.png", 119, 124, {}, 0.1f, true};
+    AnimationTrack runningTrack{ASSET_PATH "/stormhead/run.png", 119, 124, 7, 40, {}, 0.1f, true};
     spriteManager.addAnimationTrack("enemy", std::move(idleTrack), (uint32_t)enemyStates::RUNNING);
 
-    AnimationTrack damagedTrack{ASSET_PATH "/stormhead/damaged.png", 119, 124, {}, 0.1f, false};
+    AnimationTrack damagedTrack{ASSET_PATH "/stormhead/damaged.png", 119, 124, 7, 40, {}, 0.1f, false};
     spriteManager.addAnimationTrack(
         "enemy", std::move(damagedTrack), (uint32_t)enemyStates::DAMAGED);
 
@@ -76,7 +76,7 @@ void initializeEnemyAnimations(Manager &manager,
     // We make the hitbox tall and thin like a lightning bolt,
     // pushed to the side of the enemy, and detached so it stays on the ground!
     SpawnHitboxEvent lightningHitbox = {.width = 40,
-                                        .height = 80,
+                                        .height = 60,
                                         .offsetX = 40,
                                         .offsetY = 0,
                                         .duration = 0.200f,
@@ -90,8 +90,8 @@ void initializeEnemyAnimations(Manager &manager,
     enemyAttackEvents[11] = {};
 
     SpawnHitboxEvent secondaryLightningHitbox = {.width = 40,
-                                                 .height = 80,
-                                                 .offsetX = -40, // Strikes slightly behind
+                                                 .height = 60,
+                                                 .offsetX = -40,
                                                  .offsetY = 0,
                                                  .duration = 0.200f,
                                                  .attached = false};
@@ -103,7 +103,7 @@ void initializeEnemyAnimations(Manager &manager,
 
     // Register the track (Set looping to false so they don't machine-gun cast lightning)
     AnimationTrack attackTrack{
-        ASSET_PATH "/stormhead/attack.png", 119, 124, enemyAttackEvents, 0.1f, false};
+        ASSET_PATH "/stormhead/attack.png", 119, 124, 7, 40, enemyAttackEvents, 0.1f, false};
 
     spriteManager.addAnimationTrack(
         "enemy", std::move(attackTrack), (uint32_t)enemyStates::ATTACKING);
@@ -325,7 +325,7 @@ void loadMap(Manager &manager, unsigned int seed) {
 
                 float visualYOffset = (layer == 2) ? -16.0f : 0.0f;
                 Vector2 position = {(float)x * tileSize, ((float)y * tileSize) + visualYOffset};
-
+                
                 TileComponent tileComp = {.sourceRect = sourceRect, .worldPos = position};
 
                 manager.addComponent<TileComponent>(tileEntity, &tileComp);
@@ -336,7 +336,6 @@ void loadMap(Manager &manager, unsigned int seed) {
 }
 
 int main() {
-
     std::cout << "Your asset path: " << ASSET_PATH << "\n";
 
     Manager manager;
@@ -622,7 +621,7 @@ int main() {
         ClearBackground({20, 160, 210, 255});
 
         BeginMode2D(camera);
-
+        
         for (int y = 0; y < mapHeight; ++y) {
             for (int x = 0; x < mapWidth; ++x) {
                 DrawTexture(waterTexture, x * 64, y * 64, WHITE);
@@ -634,7 +633,6 @@ int main() {
         });
 
         AnimationSystem::update(manager, spriteManager, eventDispatcher, dt);
-        // std::cout << "Ran animation system.\n";
 
         updateEvents<SpawnHitboxEvent>(
             manager, [hunter, nowTime](Manager &manager, const EntityId eventEntity) {
@@ -646,15 +644,16 @@ int main() {
                 auto transformComp = manager.getComponent<TransformComponent>(entity);
                 auto statsComp = manager.getComponent<StatsComponent>(entity);
 
+                float dirMultiplier = (transformComp->facingDirection == -1) ? -1.0f : 1.0f;
+
+                float attackCenterX = transformComp->pos.x + (hitboxInfo->offsetX * dirMultiplier);
+                float attackCenterY = transformComp->pos.y + hitboxInfo->offsetY;
+
                 float finalWidth = hitboxInfo->width * statsComp->hitboxScale;
                 float finalHeight = hitboxInfo->height * statsComp->hitboxScale;
 
-                float dirMultiplier = (transformComp->facingDirection == -1) ? -1.0f : 1.0f;
-
-                float startingOffsetX = hitboxInfo->offsetX * dirMultiplier;
-
-                float spawnX = (transformComp->pos.x + startingOffsetX) - (finalWidth / 2.0f);
-                float spawnY = (transformComp->pos.y + hitboxInfo->offsetY);
+                float spawnX = attackCenterX - (finalWidth / 2.0f);
+                float spawnY = attackCenterY - (finalHeight / 2.0f);
 
                 auto hitboxEntity = manager.addEntity();
                 HitboxComponent hitboxComp = {.srcEntity = entity,
@@ -679,9 +678,26 @@ int main() {
                 manager.setComponent<LifespanComponent>(hitboxEntity, lifespanComp);
                 manager.setComponent<HitboxComponent>(hitboxEntity, hitboxComp);
             });
+        
+        manager.runSystem<TransformComponent>([](EntityId entity, TransformComponent &transform) {
+            
+            // Shrink the box so it tightly wraps the visual pixels, not the 128x128 empty space!
+            float bodyWidth = 40.0f;
+            float bodyHeight = 40.0f;
+
+            // Convert the character's CENTER pos to a TOP-LEFT coordinate to draw the rectangle
+            float topLeftX = transform.pos.x - (bodyWidth / 2.0f);
+            float topLeftY = transform.pos.y - (bodyHeight / 2.0f);
+
+            DrawRectangleLines(topLeftX, topLeftY, bodyWidth, bodyHeight, GREEN);
+            
+            // Draw a tiny crosshair exactly on their pos to prove it is the true center
+            DrawLine(transform.pos.x - 5, transform.pos.y, transform.pos.x + 5, transform.pos.y, BLUE);
+            DrawLine(transform.pos.x, transform.pos.y - 5, transform.pos.x, transform.pos.y + 5, BLUE);
+        });
 
         manager.runSystem<HitboxComponent>([](EntityId entity, HitboxComponent &hitbox) {
-            DrawRectangleLines(hitbox.x, hitbox.y, hitbox.width, hitbox.height, YELLOW);
+            DrawRectangleLines(hitbox.x, hitbox.y, hitbox.width, hitbox.height, RED);
         });
 
         EndMode2D();
@@ -696,18 +712,27 @@ int main() {
 
             for (auto enemy : enemyView) {
                 auto enemyTransform = manager.getComponent<TransformComponent>(enemy);
-
                 if (enemyTransform == nullptr)
-                    continue;
+                continue;
+                
+                float actualBodyWidth = 40.0f;  
+                float actualBodyHeight = 40.0f; 
+                
+                // 1. Convert the centered position directly to a Top/Bottom/Left/Right Box
+                // Since pos IS the center, we just step outwards by half the size in each direction.
+                float enemyLeft   = enemyTransform->pos.x - (actualBodyWidth / 2.0f);
+                float enemyRight  = enemyTransform->pos.x + (actualBodyWidth / 2.0f);
+                float enemyTop    = enemyTransform->pos.y - (actualBodyHeight / 2.0f);
+                float enemyBottom = enemyTransform->pos.y + (actualBodyHeight / 2.0f);
 
-                float enemyWidth = 119.0f;
-                float enemyHeight = 124.0f;
+                // 2. Calculate the Hitbox's far edges
+                // (Hitboxes are already top-left coordinates, so we just add the full width/height)
+                float hitboxRight = hitbox.x + hitbox.width;
+                float hitboxBottom = hitbox.y + hitbox.height;
 
-                bool overlapX = hitbox.x < (enemyTransform->pos.x + enemyWidth) &&
-                                (hitbox.x + hitbox.width) > enemyTransform->pos.x;
-
-                bool overlapY = hitbox.y < (enemyTransform->pos.y + enemyHeight) &&
-                                (hitbox.y + hitbox.height) > enemyTransform->pos.y;
+                // 3. The precise AABB formula
+                bool overlapX = hitbox.x < enemyRight && hitboxRight > enemyLeft;
+                bool overlapY = hitbox.y < enemyBottom && hitboxBottom > enemyTop;
 
                 if (overlapX && overlapY && !manager.has_component<DamagedStateTag>(enemy)) {
 
@@ -786,6 +811,5 @@ int main() {
     }
 
     CloseWindow();
-
     return 0;
 }
