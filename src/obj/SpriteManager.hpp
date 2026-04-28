@@ -16,8 +16,11 @@ struct AnimationTrack {
 
     uint32_t frameWidth;
     uint32_t frameHeight;
+<<<<<<< HEAD
     float trueCenterOffsetX;
     float trueCenterOffsetY;
+=======
+>>>>>>> parent of 1630e2f (Removed unnessesary files regarding the main game so only files for the ECS remain here)
 
     std::unordered_map<uint32_t, std::vector<uint64_t>> frameEvents;
 
@@ -31,16 +34,22 @@ struct AnimationTrack {
     AnimationTrack(const std::string _textureFilepath,
                    const uint32_t _width,
                    const uint32_t _height,
+<<<<<<< HEAD
                    const float centerOffX,
                    const float centerOffY,
+=======
+>>>>>>> parent of 1630e2f (Removed unnessesary files regarding the main game so only files for the ECS remain here)
                    const std::unordered_map<uint32_t, std::vector<uint64_t>> _frameEvents,
                    const float _frameDuration,
                    const bool _inLoop) {
 
         frameWidth = _width;
         frameHeight = _height;
+<<<<<<< HEAD
         trueCenterOffsetX = centerOffX;
         trueCenterOffsetY = centerOffY;
+=======
+>>>>>>> parent of 1630e2f (Removed unnessesary files regarding the main game so only files for the ECS remain here)
         frameEvents = _frameEvents;
         frameDuration = _frameDuration;
         loop = _inLoop;
