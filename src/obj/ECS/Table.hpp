@@ -7,8 +7,9 @@
 #include <vector>
 #include <ostream>
 
-#include "Component.hpp"
+#include "ComponentFamily.hpp"
 #include "Entity.hpp"
+#include "PagedColumn.hpp"
 
 using TableID = std::uint16_t;
 
@@ -20,14 +21,21 @@ struct Table {
     
     TableSignature_t signature;
     std::vector<ComponentId> componentIds;
-    std::vector<std::vector<std::byte>> components;
+    std::vector<PagedColumn> components;
 
-    std::vector<std::uint64_t> tableEntities;
+    std::vector<EntityId> tableEntities;
+
+    std::array<size_t, MAX_COMPONENTS> column_mapping;
 
     TableID id;
 
-    Table() = default;
-    Table(TableID _id) : id{_id} {}
+    Table() {
+        column_mapping.fill(static_cast<size_t>(-1));
+    }
+
+    Table(TableID _id) : Table() {
+        id = _id;
+    }
 
     friend std::ostream &operator<<(std::ostream &os, const Table &table) {
 

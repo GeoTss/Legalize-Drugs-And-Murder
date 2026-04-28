@@ -1,5 +1,7 @@
-#include "obj/AnimationSystem.hpp"
-#include "obj/ECS/Component.hpp"
+#include <iostream>
+#include <cassert>
+#include <vector>
+
 #include "obj/ECS/Manager.hpp"
 #include "obj/HitboxAttachmentSystem.hpp"
 #include "obj/PerlinNoise.hpp"
@@ -109,27 +111,21 @@ void initializeEnemyAnimations(Manager &manager,
         "enemy", std::move(attackTrack), (uint32_t)enemyStates::ATTACKING);
 }
 
-template <typename... EventTags, typename Func>
-void updateEvents(Manager &manager, const Func &&callback) {
-    auto view = manager.view<AnimationEventComponent, EventTags...>();
+void testSwapAndPop(Manager& m) {
+    std::cout << "[TEST] Swap and Pop (Component Removal)... ";
+    
+    EntityId e1 = m.addEntity();
+    EntityId e2 = m.addEntity();
+    EntityId e3 = m.addEntity();
 
-    for (auto entity : view) {
-        std::cout << "(" << getEntityIndex(entity) << ", " << getEntityGeneration(entity) << ")"
-                  << "\n";
-        callback(manager, entity);
-    }
-}
+    Position p1{1.0f, 1.0f};
+    Position p2{2.0f, 2.0f};
+    Position p3{3.0f, 3.0f};
 
-const int mapWidth = 60;
-const int mapHeight = 40;
-const float tileSize = 64.0f;
-
-void loadMap(Manager &manager, unsigned int seed) {
-
-    // We use std::vector now instead of a static array so we can easily swap data during Cellular
-    // Automata passes
-    std::vector<std::vector<int>> mapData(mapHeight, std::vector<int>(mapWidth, 0));
-    PerlinNoise perlin(seed);
+    // All entities land in the same Archetype Table
+    m.addComponent<Position>(e1, &p1);
+    m.addComponent<Position>(e2, &p2);
+    m.addComponent<Position>(e3, &p3);
 
     // ==========================================
     // PHASE 1: GENERATE BASE GRASS (LAYER 1)
