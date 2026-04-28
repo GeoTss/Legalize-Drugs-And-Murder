@@ -11,10 +11,11 @@
 #include <unordered_map>
 
 #include "Archetype.hpp"
-#include "Component.hpp"
+#include "ComponentFamily.hpp"
+#include "ComponentTraits.hpp"
 #include "Entity.hpp"
 #include "Table.hpp"
-#include "PagedColumn.hpp" // MUST BE INCLUDED
+#include "PagedColumn.hpp"
 
 template <typename... Ts> struct TypeList {};
 template <typename L1, typename L2> struct ConcatLists;
@@ -142,7 +143,6 @@ struct Manager {
 
                 table->tableEntities.pop_back();
 
-                // Shrink the PagedColumns
                 for (ComponentId cid : table->componentIds) {
                     size_t col = table->column_mapping[cid];
                     table->components[col].pop_back();
@@ -184,7 +184,7 @@ struct Manager {
     template <typename T> void setComponent(EntityId entity, T &component) {
         T *toSetComp = getComponent<T>(entity);
         if (toSetComp != nullptr)
-            *toSetComp = component; // Uses standard assignment
+            *toSetComp = component;
     }
 
     template <typename T>
@@ -241,7 +241,6 @@ struct Manager {
         size_t newRow = newTable->tableEntities.size();
         newTable->tableEntities.push_back(entity);
 
-        // Safely push_back on PagedColumn (allocates pages internally if needed)
         for (ComponentId cid : newTable->componentIds) {
             size_t col = newTable->column_mapping[cid];
             newTable->components[col].push_back();
@@ -317,6 +316,7 @@ struct Manager {
     template <typename... Ts> void addComponents(EntityId entity, const Ts *...initialValues) {
         static_assert(sizeof...(Ts) > 0, "Must add at least one component.");
 
+        ((component_size[ComponentID<Ts>::_id] = std::is_empty_v<Ts> ? 0 : sizeof(Ts)), ...);
         ((component_traits[ComponentID<Ts>::_id] = make_component_traits<Ts>()), ...);
 
         if (!isEntityValid(entity))
@@ -611,48 +611,80 @@ struct Manager {
   private:
     template <typename... Components, typename Func, typename... Filtered>
     void runSystemImpl(Func &&systemFunction, TypeList<Filtered...>)
-        requires std::is_invocable_v<Func, EntityId, Filtered &...>
+        requires std::is_invocable_v<Func, EntityId, Filtered &...> 
     {
         const auto& queriedArchetypes = queryArchtypes<Components...>();
 
         for (auto arch : queriedArchetypes) {
-            if (arch->entities.empty()) continue;
             Table *table = arch->dataTable;
+            if (!table || table->tableEntities.empty()) continue;
 
-            for (EntityId e : arch->entities) {
-                uint32_t index = getEntityIndex(e);
-                size_t physRow = entity_index[index].row;
+            size_t total_entities = table->tableEntities.size();
+            size_t total_pages = (total_entities + PagedColumn::ENTITIES_PER_PAGE - 1) / PagedColumn::ENTITIES_PER_PAGE;
 
-                // Expand components dynamically without relying on contiguous .data()
-                systemFunction(
-                    e,
-                    *reinterpret_cast<Filtered *>(
-                        table->components[table->column_mapping[ComponentID<Filtered>::_id]].get(physRow)
-                    )...
-                );
+            auto columns = std::make_tuple(
+                &table->components[table->column_mapping[ComponentID<Filtered>::_id]]...
+            );
+
+            for (size_t p = 0; p < total_pages; ++p) {
+                
+                size_t count = (p == total_pages - 1 && total_entities % PagedColumn::ENTITIES_PER_PAGE != 0) 
+                               ? (total_entities % PagedColumn::ENTITIES_PER_PAGE) 
+                               : PagedColumn::ENTITIES_PER_PAGE;
+
+                const EntityId* entity_array = table->tableEntities.data() + (p * PagedColumn::ENTITIES_PER_PAGE);
+
+                std::apply([&](auto*... col) {
+                    
+                    auto execute_hot_loop = [&](auto*... raw_arrays) {
+                        for (size_t i = 0; i < count; ++i) {
+                            systemFunction(entity_array[i], raw_arrays[i]...);
+                        }
+                    };
+
+                    execute_hot_loop(static_cast<Filtered*>(col->get_page_data(p))...);
+
+                }, columns);
             }
         }
     }
 
     template <typename... Components, typename Func, typename... Filtered>
     void runSystemImpl(Func &&systemFunction, TypeList<Filtered...>)
-        requires std::is_invocable_v<Func, Filtered &...>
+        requires std::is_invocable_v<Func, Filtered &...> 
     {
         const auto& queriedArchetypes = queryArchtypes<Components...>();
 
         for (auto arch : queriedArchetypes) {
-            if (arch->entities.empty()) continue;
             Table *table = arch->dataTable;
+            if (!table || table->tableEntities.empty()) continue;
 
-            for (EntityId e : arch->entities) {
-                uint32_t index = getEntityIndex(e);
-                size_t physRow = entity_index[index].row;
+            size_t total_entities = table->tableEntities.size();
+            size_t total_pages = (total_entities + PagedColumn::ENTITIES_PER_PAGE - 1) / PagedColumn::ENTITIES_PER_PAGE;
 
-                systemFunction(
-                    *reinterpret_cast<Filtered *>(
-                        table->components[table->column_mapping[ComponentID<Filtered>::_id]].get(physRow)
-                    )...
-                );
+            auto columns = std::make_tuple(
+                &table->components[table->column_mapping[ComponentID<Filtered>::_id]]...
+            );
+
+            for (size_t p = 0; p < total_pages; ++p) {
+                
+                size_t count = (p == total_pages - 1 && total_entities <= PagedColumn::ENTITIES_PER_PAGE) 
+                               ? total_entities
+                               : PagedColumn::ENTITIES_PER_PAGE;
+
+                const EntityId* entity_array = table->tableEntities.data() + (p * PagedColumn::ENTITIES_PER_PAGE);
+
+                std::apply([&](auto*... col) {
+                    
+                    auto execute_hot_loop = [&](auto*... raw_arrays) {
+                        for (size_t i = 0; i < count; ++i) {
+                            systemFunction(raw_arrays[i]...);
+                        }
+                    };
+
+                    execute_hot_loop(static_cast<Filtered*>(col->get_page_data(p))...);
+
+                }, columns);
             }
         }
     }
@@ -683,7 +715,6 @@ struct Manager {
                 newTable.componentIds.push_back(i);
                 newTable.column_mapping[i] = col++;
                 
-                // CRUCIAL: Initialize the PagedColumn with the exact byte size
                 newTable.components.emplace_back(component_size[i]);
             }
         }

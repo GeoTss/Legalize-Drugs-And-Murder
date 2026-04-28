@@ -2,7 +2,7 @@
 #define ARCHETYPE_HPP
 #pragma once
 
-#include "Component.hpp"
+#include "ComponentFamily.hpp"
 #include "Entity.hpp"
 #include "Table.hpp"
 

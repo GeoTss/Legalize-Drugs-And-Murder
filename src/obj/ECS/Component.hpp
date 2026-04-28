@@ -4,9 +4,6 @@
 
 #include <stdint.h>
 
-#include "unique_counter.hpp"
-#include "ComponentFamily.hpp"
-#include "ComponentTraits.hpp"
 #include "Entity.hpp"
 
 struct TransformComponent {

@@ -17,11 +17,9 @@ consteval ComponentTraits make_component_traits() {
     return {
         sizeof(T),
         [](void* dest, void* src) {
-            // Respects move constructors (crucial for things like std::string or std::vector)
             std::construct_at(static_cast<T*>(dest), std::move(*static_cast<T*>(src)));
         },
         [](void* ptr) {
-            // Respects destructors
             std::destroy_at(static_cast<T*>(ptr));
         }
     };

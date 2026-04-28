@@ -7,7 +7,7 @@
 #include <vector>
 #include <ostream>
 
-#include "Component.hpp"
+#include "ComponentFamily.hpp"
 #include "Entity.hpp"
 #include "PagedColumn.hpp"
 
@@ -23,7 +23,7 @@ struct Table {
     std::vector<ComponentId> componentIds;
     std::vector<PagedColumn> components;
 
-    std::vector<std::uint64_t> tableEntities;
+    std::vector<EntityId> tableEntities;
 
     std::array<size_t, MAX_COMPONENTS> column_mapping;
 
