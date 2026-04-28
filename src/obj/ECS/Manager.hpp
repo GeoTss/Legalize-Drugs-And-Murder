@@ -12,10 +12,9 @@
 
 #include "Archetype.hpp"
 #include "ComponentFamily.hpp"
-#include "ComponentTraits.hpp"
 #include "Entity.hpp"
-#include "Table.hpp"
 #include "PagedColumn.hpp"
+#include "Table.hpp"
 
 template <typename... Ts> struct TypeList {};
 template <typename L1, typename L2> struct ConcatLists;
@@ -51,12 +50,10 @@ struct Manager {
     std::unordered_map<ArchSignature_t, Archetype> archetype_index;
     std::unordered_map<ArchetypeId, Archetype *> archetypeIdIndex;
 
-    std::vector<std::pair<ArchSignature_t, std::vector<Archetype*>*>> active_queries;
+    std::vector<std::pair<ArchSignature_t, std::vector<Archetype *> *>> active_queries;
 
     std::unordered_map<TableSignature_t, Table> table_index;
     std::unordered_map<TableID, Table *> tableIdIndex;
-
-    std::array<ComponentTraits, MAX_COMPONENTS> component_traits;
 
     EntityId entityIdCount = 0;
     ArchetypeId archetypeIdCount = 0;
@@ -121,26 +118,15 @@ struct Manager {
                     entity_index[moveToIdx].row = rowToDelete;
 
                     for (ComponentId cid : table->componentIds) {
-                        const auto &traits = component_traits[cid];
                         size_t col = table->column_mapping[cid];
 
                         void *hole_dest = table->components[col].get(rowToDelete);
                         void *last_src = table->components[col].get(lastRow);
 
-                        traits.destroy(hole_dest);
-                        traits.move_construct(hole_dest, last_src);
-                        traits.destroy(last_src);
+                        std::memcpy(hole_dest, last_src, component_size[cid]);
                     }
-                } else {
-                    for (ComponentId cid : table->componentIds) {
-                        const auto &traits = component_traits[cid];
-                        size_t col = table->column_mapping[cid];
-
-                        void *target = table->components[col].get(rowToDelete);
-                        traits.destroy(target);
-                    }
-                }
-
+                } 
+                
                 table->tableEntities.pop_back();
 
                 for (ComponentId cid : table->componentIds) {
@@ -192,13 +178,15 @@ struct Manager {
         requires std::is_trivially_copyable_v<T>
     {
         static const ComponentId component = ComponentID<T>::_id;
+
+        assert(component < MAX_COMPONENTS && "Component ID exceeds MAX_COMPONENTS!");
+
         static const size_t componentSize = std::is_empty_v<T> ? 0 : sizeof(T);
 
         if (has_component(entity, component))
             return;
 
         component_size[component] = componentSize;
-        component_traits[component] = make_component_traits<T>();
 
         if (!isEntityValid(entity))
             return;
@@ -228,6 +216,7 @@ struct Manager {
 
         if (currentArchtype)
             removeEntityFromArchetype(currentArchtype, entity);
+
         nextArchtype->entities.push_back(entity);
 
         Table *oldTable = currentArchtype ? currentArchtype->dataTable : nullptr;
@@ -253,14 +242,13 @@ struct Manager {
                 if (!newTable->signature.test(cid))
                     continue;
 
-                const auto &traits = component_traits[cid];
                 size_t oldCol = oldTable->column_mapping[cid];
                 size_t newCol = newTable->column_mapping[cid];
 
                 void *dest = newTable->components[newCol].get(newRow);
                 void *src = oldTable->components[oldCol].get(oldRow);
 
-                traits.move_construct(dest, src);
+                std::memcpy(dest, src, component_size[cid]);
             }
 
             size_t lastRow = oldTable->tableEntities.size() - 1;
@@ -268,28 +256,16 @@ struct Manager {
 
             if (oldRow != lastRow) {
                 for (ComponentId cid : oldTable->componentIds) {
-                    const auto &traits = component_traits[cid];
                     size_t col = oldTable->column_mapping[cid];
 
                     void *hole_dest = oldTable->components[col].get(oldRow);
                     void *last_src = oldTable->components[col].get(lastRow);
 
-                    traits.destroy(hole_dest);
-                    traits.move_construct(hole_dest, last_src);
-                    traits.destroy(last_src);
+                    std::memcpy(hole_dest, last_src, component_size[cid]);
                 }
-
                 uint32_t lastEntityIdx = getEntityIndex(lastEntity);
                 entity_index[lastEntityIdx].row = oldRow;
                 oldTable->tableEntities[oldRow] = lastEntity;
-            } else {
-                for (ComponentId cid : oldTable->componentIds) {
-                    const auto &traits = component_traits[cid];
-                    size_t col = oldTable->column_mapping[cid];
-
-                    void *moved_src = oldTable->components[col].get(oldRow);
-                    traits.destroy(moved_src);
-                }
             }
 
             for (ComponentId cid : oldTable->componentIds) {
@@ -299,25 +275,26 @@ struct Manager {
             oldTable->tableEntities.pop_back();
         }
 
-        if (initialValue != nullptr && !std::is_empty_v<T>) {
-            size_t newCol = newTable->column_mapping[component];
+        if constexpr (!std::is_empty_v<T>) {
+            ComponentId cid = ComponentID<T>::_id;
+            size_t newCol = newTable->column_mapping[cid];
             void *dest = newTable->components[newCol].get(newRow);
-            std::construct_at(static_cast<T *>(dest), *initialValue);
-        } else if (!std::is_empty_v<T>) {
-            size_t newCol = newTable->column_mapping[component];
-            void *dest = newTable->components[newCol].get(newRow);
-            std::construct_at(static_cast<T *>(dest));
+
+            if (initialValue != nullptr) {
+                std::memcpy(dest, initialValue, sizeof(T));
+            } else {
+                std::memset(dest, 0, sizeof(T));
+            }
         }
+
 
         record.archetype = nextArchtype;
         record.row = newRow;
     }
-
     template <typename... Ts> void addComponents(EntityId entity, const Ts *...initialValues) {
         static_assert(sizeof...(Ts) > 0, "Must add at least one component.");
 
         ((component_size[ComponentID<Ts>::_id] = std::is_empty_v<Ts> ? 0 : sizeof(Ts)), ...);
-        ((component_traits[ComponentID<Ts>::_id] = make_component_traits<Ts>()), ...);
 
         if (!isEntityValid(entity))
             return;
@@ -338,13 +315,15 @@ struct Manager {
         if (currentArchtype == nextArchtype) {
             (
                 [&]() {
-                    if (initialValues != nullptr && !std::is_empty_v<Ts>) {
-                        ComponentId cid = ComponentID<Ts>::_id;
-                        size_t col = nextArchtype->dataTable->column_mapping[cid];
-                        void *dest = nextArchtype->dataTable->components[col].get(record.row);
+                    if constexpr (!std::is_empty_v<Ts>) {
+                        if (initialValues != nullptr) {
+                            ComponentId cid = ComponentID<Ts>::_id;
+                            size_t col = nextArchtype->dataTable->column_mapping[cid];
 
-                        component_traits[cid].destroy(dest);
-                        std::construct_at(static_cast<Ts *>(dest), *initialValues);
+                            void *dest = nextArchtype->dataTable->components[col].get(record.row);
+
+                            std::memcpy(dest, initialValues, sizeof(Ts));
+                        }
                     }
                 }(),
                 ...);
@@ -379,14 +358,13 @@ struct Manager {
                 if (!newTable->signature.test(cid))
                     continue;
 
-                const auto &traits = component_traits[cid];
                 size_t oldCol = oldTable->column_mapping[cid];
                 size_t newCol = newTable->column_mapping[cid];
 
                 void *dest = newTable->components[newCol].get(newRow);
                 void *src = oldTable->components[oldCol].get(oldRow);
 
-                traits.move_construct(dest, src);
+                std::memcpy(dest, src, component_size[cid]);
             }
 
             size_t lastRow = oldTable->tableEntities.size() - 1;
@@ -394,26 +372,16 @@ struct Manager {
 
             if (oldRow != lastRow) {
                 for (ComponentId cid : oldTable->componentIds) {
-                    const auto &traits = component_traits[cid];
                     size_t col = oldTable->column_mapping[cid];
 
                     void *hole_dest = oldTable->components[col].get(oldRow);
                     void *last_src = oldTable->components[col].get(lastRow);
 
-                    traits.destroy(hole_dest);
-                    traits.move_construct(hole_dest, last_src);
-                    traits.destroy(last_src);
+                    std::memcpy(hole_dest, last_src, component_size[cid]);
                 }
                 uint32_t lastEntityIdx = getEntityIndex(lastEntity);
                 entity_index[lastEntityIdx].row = oldRow;
                 oldTable->tableEntities[oldRow] = lastEntity;
-            } else {
-                for (ComponentId cid : oldTable->componentIds) {
-                    const auto &traits = component_traits[cid];
-                    size_t col = oldTable->column_mapping[cid];
-                    void *target = oldTable->components[col].get(oldRow);
-                    traits.destroy(target);
-                }
             }
 
             for (ComponentId cid : oldTable->componentIds) {
@@ -425,15 +393,15 @@ struct Manager {
 
         (
             [&]() {
-                if (!std::is_empty_v<Ts>) {
+                if constexpr (!std::is_empty_v<Ts>) {
                     ComponentId cid = ComponentID<Ts>::_id;
                     size_t newCol = newTable->column_mapping[cid];
                     void *dest = newTable->components[newCol].get(newRow);
 
                     if (initialValues != nullptr) {
-                        std::construct_at(static_cast<Ts *>(dest), *initialValues);
+                        std::memcpy(dest, initialValues, sizeof(Ts));
                     } else {
-                        std::construct_at(static_cast<Ts *>(dest));
+                        std::memset(dest, 0, sizeof(Ts));
                     }
                 }
             }(),
@@ -471,6 +439,7 @@ struct Manager {
         } else {
             ArchSignature_t newSignature = currentArchtype->typeSet;
             newSignature.reset(component);
+            
             if (newSignature.any()) {
                 nextArchtype = getOrCreateArchetype(newSignature);
                 edge.remove = nextArchtype;
@@ -491,6 +460,7 @@ struct Manager {
         }
 
         size_t newRow = 0;
+        
         if (newTable != nullptr) {
             newRow = newTable->tableEntities.size();
             newTable->tableEntities.push_back(entity);
@@ -505,17 +475,16 @@ struct Manager {
 
         if (newTable != nullptr) {
             for (ComponentId cid : oldTable->componentIds) {
-                if (cid == component || !newTable->signature.test(cid))
+                if (!newTable->signature.test(cid))
                     continue;
 
-                const auto &traits = component_traits[cid];
                 size_t oldCol = oldTable->column_mapping[cid];
                 size_t newCol = newTable->column_mapping[cid];
 
                 void *dest = newTable->components[newCol].get(newRow);
                 void *src = oldTable->components[oldCol].get(oldRow);
 
-                traits.move_construct(dest, src);
+                std::memcpy(dest, src, component_size[cid]);
             }
         }
 
@@ -524,29 +493,19 @@ struct Manager {
 
         if (oldRow != lastRow) {
             for (ComponentId cid : oldTable->componentIds) {
-                const auto &traits = component_traits[cid];
                 size_t col = oldTable->column_mapping[cid];
 
                 void *hole_dest = oldTable->components[col].get(oldRow);
                 void *last_src = oldTable->components[col].get(lastRow);
 
-                traits.destroy(hole_dest);
-                traits.move_construct(hole_dest, last_src);
-                traits.destroy(last_src);
+                std::memcpy(hole_dest, last_src, component_size[cid]);
             }
+            
             uint32_t lastEntityIdx = getEntityIndex(lastEntity);
             entity_index[lastEntityIdx].row = oldRow;
-
             oldTable->tableEntities[oldRow] = lastEntity;
-        } else {
-            for (ComponentId cid : oldTable->componentIds) {
-                const auto &traits = component_traits[cid];
-                size_t col = oldTable->column_mapping[cid];
-                void *target = oldTable->components[col].get(oldRow);
-                traits.destroy(target);
-            }
-        }
-
+        } 
+        
         for (ComponentId cid : oldTable->componentIds) {
             size_t col = oldTable->column_mapping[cid];
             oldTable->components[col].pop_back();
@@ -559,22 +518,26 @@ struct Manager {
 
     template <typename T> bool has_component(EntityId entity) {
         static size_t component = ComponentID<T>::_id;
-        if (!isEntityValid(entity)) return false;
+        if (!isEntityValid(entity))
+            return false;
 
         uint32_t index = getEntityIndex(entity);
         Archetype *archetype = entity_index[index].archetype;
-        if (archetype == nullptr) return false;
-        
+        if (archetype == nullptr)
+            return false;
+
         return archetype->typeSet.test(component);
     }
 
     bool has_component(EntityId entity, ComponentId component) {
-        if (!isEntityValid(entity)) return false;
+        if (!isEntityValid(entity))
+            return false;
 
         uint32_t index = getEntityIndex(entity);
         Archetype *archetype = entity_index[index].archetype;
-        if (archetype == nullptr) return false;
-        
+        if (archetype == nullptr)
+            return false;
+
         return archetype->typeSet.test(component);
     }
 
@@ -585,7 +548,7 @@ struct Manager {
             return sig;
         }();
 
-        static std::vector<Archetype*> queryRes;
+        static std::vector<Archetype *> queryRes;
         static bool initialized = false;
 
         if (!initialized) {
@@ -601,7 +564,8 @@ struct Manager {
     }
 
     template <typename... Components, typename Func> inline void runSystem(Func &&func) {
-        if constexpr (sizeof...(Components) == 0) return;
+        if constexpr (sizeof...(Components) == 0)
+            return;
         using FilteredList = typename FilterEmpty<Components...>::type;
         runSystemImpl<Components...>(std::forward<Func>(func), FilteredList{});
     }
@@ -611,80 +575,86 @@ struct Manager {
   private:
     template <typename... Components, typename Func, typename... Filtered>
     void runSystemImpl(Func &&systemFunction, TypeList<Filtered...>)
-        requires std::is_invocable_v<Func, EntityId, Filtered &...> 
+        requires std::is_invocable_v<Func, EntityId, Filtered &...>
     {
-        const auto& queriedArchetypes = queryArchtypes<Components...>();
+        const auto &queriedArchetypes = queryArchtypes<Components...>();
 
         for (auto arch : queriedArchetypes) {
             Table *table = arch->dataTable;
-            if (!table || table->tableEntities.empty()) continue;
+            if (!table || table->tableEntities.empty())
+                continue;
 
             size_t total_entities = table->tableEntities.size();
-            size_t total_pages = (total_entities + PagedColumn::ENTITIES_PER_PAGE - 1) / PagedColumn::ENTITIES_PER_PAGE;
+            size_t total_pages = (total_entities + PagedColumn::ENTITIES_PER_PAGE - 1) /
+                                 PagedColumn::ENTITIES_PER_PAGE;
 
             auto columns = std::make_tuple(
-                &table->components[table->column_mapping[ComponentID<Filtered>::_id]]...
-            );
+                &table->components[table->column_mapping[ComponentID<Filtered>::_id]]...);
 
             for (size_t p = 0; p < total_pages; ++p) {
-                
-                size_t count = (p == total_pages - 1 && total_entities % PagedColumn::ENTITIES_PER_PAGE != 0) 
-                               ? (total_entities % PagedColumn::ENTITIES_PER_PAGE) 
-                               : PagedColumn::ENTITIES_PER_PAGE;
 
-                const EntityId* entity_array = table->tableEntities.data() + (p * PagedColumn::ENTITIES_PER_PAGE);
+                size_t count =
+                    (p == total_pages - 1 && total_entities % PagedColumn::ENTITIES_PER_PAGE != 0)
+                        ? (total_entities % PagedColumn::ENTITIES_PER_PAGE)
+                        : PagedColumn::ENTITIES_PER_PAGE;
 
-                std::apply([&](auto*... col) {
-                    
-                    auto execute_hot_loop = [&](auto*... raw_arrays) {
-                        for (size_t i = 0; i < count; ++i) {
-                            systemFunction(entity_array[i], raw_arrays[i]...);
-                        }
-                    };
+                const EntityId *entity_array =
+                    table->tableEntities.data() + (p * PagedColumn::ENTITIES_PER_PAGE);
 
-                    execute_hot_loop(static_cast<Filtered*>(col->get_page_data(p))...);
+                std::apply(
+                    [&](auto *...col) {
+                        auto execute_hot_loop = [&](auto *...raw_arrays) {
+                            for (size_t i = 0; i < count; ++i) {
+                                systemFunction(entity_array[i], raw_arrays[i]...);
+                            }
+                        };
 
-                }, columns);
+                        execute_hot_loop(static_cast<Filtered *>(col->get_page_data(p))...);
+                    },
+                    columns);
             }
         }
     }
 
     template <typename... Components, typename Func, typename... Filtered>
     void runSystemImpl(Func &&systemFunction, TypeList<Filtered...>)
-        requires std::is_invocable_v<Func, Filtered &...> 
+        requires std::is_invocable_v<Func, Filtered &...>
     {
-        const auto& queriedArchetypes = queryArchtypes<Components...>();
+        const auto &queriedArchetypes = queryArchtypes<Components...>();
 
         for (auto arch : queriedArchetypes) {
             Table *table = arch->dataTable;
-            if (!table || table->tableEntities.empty()) continue;
+            if (!table || table->tableEntities.empty())
+                continue;
 
             size_t total_entities = table->tableEntities.size();
-            size_t total_pages = (total_entities + PagedColumn::ENTITIES_PER_PAGE - 1) / PagedColumn::ENTITIES_PER_PAGE;
+            size_t total_pages = (total_entities + PagedColumn::ENTITIES_PER_PAGE - 1) /
+                                 PagedColumn::ENTITIES_PER_PAGE;
 
             auto columns = std::make_tuple(
-                &table->components[table->column_mapping[ComponentID<Filtered>::_id]]...
-            );
+                &table->components[table->column_mapping[ComponentID<Filtered>::_id]]...);
 
             for (size_t p = 0; p < total_pages; ++p) {
-                
-                size_t count = (p == total_pages - 1 && total_entities <= PagedColumn::ENTITIES_PER_PAGE) 
-                               ? total_entities
-                               : PagedColumn::ENTITIES_PER_PAGE;
 
-                const EntityId* entity_array = table->tableEntities.data() + (p * PagedColumn::ENTITIES_PER_PAGE);
+                size_t count =
+                    (p == total_pages - 1 && total_entities <= PagedColumn::ENTITIES_PER_PAGE)
+                        ? total_entities
+                        : PagedColumn::ENTITIES_PER_PAGE;
 
-                std::apply([&](auto*... col) {
-                    
-                    auto execute_hot_loop = [&](auto*... raw_arrays) {
-                        for (size_t i = 0; i < count; ++i) {
-                            systemFunction(raw_arrays[i]...);
-                        }
-                    };
+                const EntityId *entity_array =
+                    table->tableEntities.data() + (p * PagedColumn::ENTITIES_PER_PAGE);
 
-                    execute_hot_loop(static_cast<Filtered*>(col->get_page_data(p))...);
+                std::apply(
+                    [&](auto *...col) {
+                        auto execute_hot_loop = [&](auto *...raw_arrays) {
+                            for (size_t i = 0; i < count; ++i) {
+                                systemFunction(raw_arrays[i]...);
+                            }
+                        };
 
-                }, columns);
+                        execute_hot_loop(static_cast<Filtered *>(col->get_page_data(p))...);
+                    },
+                    columns);
             }
         }
     }
@@ -714,7 +684,7 @@ struct Manager {
             if (signature.test(i)) {
                 newTable.componentIds.push_back(i);
                 newTable.column_mapping[i] = col++;
-                
+
                 newTable.components.emplace_back(component_size[i]);
             }
         }
@@ -747,7 +717,7 @@ struct Manager {
         newArchtype.trueComponentCount = trueSize;
         newArchtype.dataTable = getOrCreateTable(tableSig);
 
-        for (auto& [querySignature, queryCachePtr] : active_queries) {
+        for (auto &[querySignature, queryCachePtr] : active_queries) {
             if ((signature & querySignature) == querySignature) {
                 queryCachePtr->push_back(&newArchtype);
             }
