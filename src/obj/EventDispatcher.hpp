@@ -8,6 +8,7 @@
 #include <unordered_map>
 
 #include "ECS/Manager.hpp"
+#include "ECS/Component.hpp"
 
 constexpr uint64_t fnv1a_64(const char *str, size_t len) {
     uint64_t hash = 0xcbf29ce484222325ULL;

@@ -34,7 +34,6 @@ struct AnimationSystem {
     // 1. ADDED Camera3D TO THE ARGUMENTS
     static void
     update(Manager &manager, SpriteManager &spriteManager, EventDispatcher &dispatcher, float dt) {
-<<<<<<< HEAD
         manager.runSystem<TransformComponent, AnimationStateComponent, StateComponent>(
             [&manager, &spriteManager, &dispatcher, dt](EntityId entity,
                                                         TransformComponent &transform,
@@ -103,70 +102,6 @@ struct AnimationSystem {
 
                 DrawTexturePro(track.texture, sourceRec, destRec, origin, 0.0f, WHITE);
             });
-=======
-        manager.runSystem<TransformComponent, AnimationStateComponent, StateComponent>([&manager, &spriteManager, &dispatcher, dt](EntityId entity, TransformComponent& transform, AnimationStateComponent& anim, StateComponent& stateComponent){
-            
-            uint8_t currentState = stateComponent.stateID;
-
-            if (anim.profile == nullptr ||
-                !anim.profile->stateAnimations.contains(currentState))
-                return;
-
-            const AnimationTrack &track = anim.profile->stateAnimations[currentState];
-
-            anim.stateTimer += dt;
-
-            if (anim.stateTimer >= track.frameDuration) {
-                anim.stateTimer = 0;
-
-                anim.currentFrame += 1;
-
-                if (anim.currentFrame >= track.frames.size()) {
-                    if (track.loop)
-                        anim.currentFrame = 0;
-                    else{
-                        anim.currentFrame = track.frames.size() - 1;
-                        manager.addComponent<AnimationCompleteTag>(entity);
-                    }
-                }
-            }
-
-            if (anim.lastProcessedFrame != anim.currentFrame) {
-                auto eventIter = track.frameEvents.find(anim.currentFrame);
-                if (eventIter != track.frameEvents.end() && !eventIter->second.empty()) {
-
-                    for (auto eventId : eventIter->second) {
-
-                        auto eventEntityId = manager.addEntity();
-                        dispatcher.dispatchConstruction(manager, eventEntityId, entity, eventId);
-                    }
-                }
-                anim.lastProcessedFrame = anim.currentFrame;
-            }
-
-            uint32_t spriteIndex = track.frames[anim.currentFrame];
-
-            int columns = track.texture.width / track.frameWidth;
-
-            float srcX = (spriteIndex % columns) * track.frameWidth;
-            float srcY = (spriteIndex / columns) * track.frameHeight;
-
-            Rectangle sourceRec = {srcX, srcY, (float)track.frameWidth, (float)track.frameHeight};
-
-            if (transform.facingDirection == -1) {
-                sourceRec.width *= -1;
-            }
-
-            Rectangle destRec = {transform.pos.x,
-                                 transform.pos.y,
-                                 (float)track.frameWidth,
-                                 (float)track.frameHeight};
-
-            Vector2 origin = {(float)track.frameWidth / 2.0f, (float)track.frameHeight / 2.0f};
-
-            DrawTexturePro(track.texture, sourceRec, destRec, origin, 0.0f, WHITE);
-        });
->>>>>>> parent of 1630e2f (Removed unnessesary files regarding the main game so only files for the ECS remain here)
     }
 };
 

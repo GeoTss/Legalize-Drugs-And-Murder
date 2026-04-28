@@ -3,6 +3,7 @@
 #pragma once
 
 #include <stdint.h>
+#include <raylib.h>
 
 #include "Entity.hpp"
 
