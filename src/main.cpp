@@ -1,11 +1,14 @@
-#include <iostream>
 #include <cassert>
+#include <iostream>
 #include <vector>
 
 #include "obj/ECS/Manager.hpp"
+#include "obj/ECS/View.hpp"
+#include "obj/EventDispatcher.hpp"
 #include "obj/HitboxAttachmentSystem.hpp"
 #include "obj/PerlinNoise.hpp"
 #include "obj/SpriteManager.hpp"
+#include "obj/AnimationSystem.hpp"
 
 #include <iostream>
 #include <memory>
@@ -23,11 +26,13 @@ void initializeCharacterAnimations(Manager &manager,
                                    EventDispatcher &eventDispatcher) {
     spriteManager.createProfile("main");
 
-    AnimationTrack idleTrack{ASSET_PATH "/Blind-Huntress/1 - Idle.png", 240, 128, 0, 0, {}, 0.1f, true};
+    AnimationTrack idleTrack{
+        ASSET_PATH "/Blind-Huntress/1 - Idle.png", 240, 128, 0, 0, {}, 0.1f, true};
 
     spriteManager.addAnimationTrack("main", std::move(idleTrack), (uint32_t)hunterStates::IDLE);
 
-    AnimationTrack runningTrack(ASSET_PATH "/Blind-Huntress/2 - Run.png", 240, 128, 0, 0, {}, 0.1f, true);
+    AnimationTrack runningTrack(
+        ASSET_PATH "/Blind-Huntress/2 - Run.png", 240, 128, 0, 0, {}, 0.1f, true);
 
     spriteManager.addAnimationTrack(
         "main", std::move(runningTrack), (uint32_t)hunterStates::RUNNING);
@@ -47,8 +52,14 @@ void initializeCharacterAnimations(Manager &manager,
 
     lightAttackEvents[0].push_back(lightAttackEvent);
 
-    AnimationTrack lightAttackTrack{
-        ASSET_PATH "/Blind-Huntress/10 - attack 1.png", 240, 128, 0, 0, lightAttackEvents, 0.1f, false};
+    AnimationTrack lightAttackTrack{ASSET_PATH "/Blind-Huntress/10 - attack 1.png",
+                                    240,
+                                    128,
+                                    0,
+                                    0,
+                                    lightAttackEvents,
+                                    0.1f,
+                                    false};
 
     spriteManager.addAnimationTrack(
         "main", std::move(lightAttackTrack), (uint32_t)hunterStates::ATTACKING);
@@ -66,7 +77,8 @@ void initializeEnemyAnimations(Manager &manager,
     AnimationTrack runningTrack{ASSET_PATH "/stormhead/run.png", 119, 124, 7, 40, {}, 0.1f, true};
     spriteManager.addAnimationTrack("enemy", std::move(idleTrack), (uint32_t)enemyStates::RUNNING);
 
-    AnimationTrack damagedTrack{ASSET_PATH "/stormhead/damaged.png", 119, 124, 7, 40, {}, 0.1f, false};
+    AnimationTrack damagedTrack{
+        ASSET_PATH "/stormhead/damaged.png", 119, 124, 7, 40, {}, 0.1f, false};
     spriteManager.addAnimationTrack(
         "enemy", std::move(damagedTrack), (uint32_t)enemyStates::DAMAGED);
 
@@ -111,21 +123,25 @@ void initializeEnemyAnimations(Manager &manager,
         "enemy", std::move(attackTrack), (uint32_t)enemyStates::ATTACKING);
 }
 
-void testSwapAndPop(Manager& m) {
-    std::cout << "[TEST] Swap and Pop (Component Removal)... ";
-    
-    EntityId e1 = m.addEntity();
-    EntityId e2 = m.addEntity();
-    EntityId e3 = m.addEntity();
+template <typename... EventTags, typename Func>
+void updateEvents(Manager &manager, const Func &&callback) {
+    auto view = manager.view<AnimationEventComponent, EventTags...>();
 
-    Position p1{1.0f, 1.0f};
-    Position p2{2.0f, 2.0f};
-    Position p3{3.0f, 3.0f};
+    for (auto entity : view) {
+        std::cout << "(" << getEntityIndex(entity) << ", " << getEntityGeneration(entity) << ")"
+                  << "\n";
+        callback(manager, entity);
+    }
+}
 
-    // All entities land in the same Archetype Table
-    m.addComponent<Position>(e1, &p1);
-    m.addComponent<Position>(e2, &p2);
-    m.addComponent<Position>(e3, &p3);
+const int mapWidth = 60;
+const int mapHeight = 40;
+const float tileSize = 64.0f;
+
+void loadMap(Manager &manager, size_t seed) {
+
+    std::vector<std::vector<int>> mapData(mapHeight, std::vector<int>(mapWidth, 0));
+    PerlinNoise perlin(seed);
 
     // ==========================================
     // PHASE 1: GENERATE BASE GRASS (LAYER 1)
@@ -238,7 +254,10 @@ void testSwapAndPop(Manager& m) {
     };
 
     // A clean struct to hold our spritesheet coordinates
-    struct TileCoord { int col; int row; };
+    struct TileCoord {
+        int col;
+        int row;
+    };
 
     // This array acts as our Map. The index (0-15) matches the exact bitmask value!
     // Bitmask format: North(1) | South(2) | East(4) | West(8)
@@ -247,36 +266,36 @@ void testSwapAndPop(Manager& m) {
     const TileCoord bitmaskToTile[32] = {
         // --- BASE LAYER (isLayered = 0) ---
         {1, 1}, //  0: None
-        {3, 2}, //  1: North 
-        {3, 0}, //  2: South 
+        {3, 2}, //  1: North
+        {3, 0}, //  2: South
         {3, 1}, //  3: North, South
-        {0, 3}, //  4: East 
+        {0, 3}, //  4: East
         {0, 2}, //  5: North, East (Bottom-Left Corner)
         {0, 0}, //  6: South, East (Top-Left Corner)
         {0, 1}, //  7: North, South, East (Left Edge)
-        {2, 3}, //  8: West 
+        {2, 3}, //  8: West
         {2, 2}, //  9: North, West (Bottom-Right Corner)
         {2, 0}, // 10: South, West (Top-Right Corner)
         {2, 1}, // 11: North, South, West (Right Edge)
-        {1, 3}, // 12: East, West 
+        {1, 3}, // 12: East, West
         {1, 2}, // 13: North, East, West (Bottom Edge)
         {1, 0}, // 14: South, East, West (Top Edge)
         {1, 1}, // 15: North, South, East, West (Center)
 
         // --- ELEVATED LAYER (isLayered = 1) [Base cols + 6] ---
         {6, 1}, // 16: None
-        {8, 2}, // 17: North 
-        {8, 0}, // 18: South 
+        {8, 2}, // 17: North
+        {8, 0}, // 18: South
         {5, 1}, // 19: North, South
-        {5, 3}, // 20: East 
+        {5, 3}, // 20: East
         {5, 2}, // 21: North, East (Bottom-Left Corner)
         {5, 0}, // 22: South, East (Top-Left Corner)
         {5, 1}, // 23: North, South, East (Left Edge)
-        {7, 3}, // 24: West 
+        {7, 3}, // 24: West
         {7, 2}, // 25: North, West (Bottom-Right Corner)
         {7, 0}, // 26: South, West (Top-Right Corner)
         {7, 1}, // 27: North, South, West (Right Edge)
-        {6, 3}, // 28: East, West 
+        {6, 3}, // 28: East, West
         {6, 2}, // 29: North, East, West (Bottom Edge)
         {6, 0}, // 30: South, East, West (Top Edge)
         {6, 1}  // 31: North, South, East, West (Center)
@@ -288,27 +307,31 @@ void testSwapAndPop(Manager& m) {
 
                 int tileID = mapData[y][x];
 
-                if (tileID == 0) continue;
-                if (layer == 2 && tileID == 1) continue;
+                if (tileID == 0)
+                    continue;
+                if (layer == 2 && tileID == 1)
+                    continue;
 
                 int sheetCol = 1;
                 int sheetRow = 1;
 
                 if (tileID == 3) {
-                    if (layer == 2) continue;
+                    if (layer == 2)
+                        continue;
                     sheetCol = 0;
                     sheetRow = 5;
                 } else {
                     bool hasNorth = isLand(x, y - 1, layer);
                     bool hasSouth = isLand(x, y + 1, layer);
-                    bool hasEast  = isLand(x + 1, y, layer);
-                    bool hasWest  = isLand(x - 1, y, layer);
+                    bool hasEast = isLand(x + 1, y, layer);
+                    bool hasWest = isLand(x - 1, y, layer);
 
                     // True if we are drawing the elevated layer (Layer 2)
                     bool isLayered = (layer == 2);
 
                     // Create the 5-bit mask!
-                    int bitmask = hasNorth | (hasSouth << 1) | (hasEast << 2) | (hasWest << 3) | (isLayered << 4);
+                    int bitmask = hasNorth | (hasSouth << 1) | (hasEast << 2) | (hasWest << 3) |
+                                  (isLayered << 4);
 
                     // Fetch the coordinates directly from our Table!
                     sheetCol = bitmaskToTile[bitmask].col;
@@ -321,7 +344,7 @@ void testSwapAndPop(Manager& m) {
 
                 float visualYOffset = (layer == 2) ? -16.0f : 0.0f;
                 Vector2 position = {(float)x * tileSize, ((float)y * tileSize) + visualYOffset};
-                
+
                 TileComponent tileComp = {.sourceRect = sourceRect, .worldPos = position};
 
                 manager.addComponent<TileComponent>(tileEntity, &tileComp);
@@ -617,7 +640,7 @@ int main() {
         ClearBackground({20, 160, 210, 255});
 
         BeginMode2D(camera);
-        
+
         for (int y = 0; y < mapHeight; ++y) {
             for (int x = 0; x < mapWidth; ++x) {
                 DrawTexture(waterTexture, x * 64, y * 64, WHITE);
@@ -674,9 +697,8 @@ int main() {
                 manager.setComponent<LifespanComponent>(hitboxEntity, lifespanComp);
                 manager.setComponent<HitboxComponent>(hitboxEntity, hitboxComp);
             });
-        
+
         manager.runSystem<TransformComponent>([](EntityId entity, TransformComponent &transform) {
-            
             // Shrink the box so it tightly wraps the visual pixels, not the 128x128 empty space!
             float bodyWidth = 40.0f;
             float bodyHeight = 40.0f;
@@ -686,10 +708,12 @@ int main() {
             float topLeftY = transform.pos.y - (bodyHeight / 2.0f);
 
             DrawRectangleLines(topLeftX, topLeftY, bodyWidth, bodyHeight, GREEN);
-            
+
             // Draw a tiny crosshair exactly on their pos to prove it is the true center
-            DrawLine(transform.pos.x - 5, transform.pos.y, transform.pos.x + 5, transform.pos.y, BLUE);
-            DrawLine(transform.pos.x, transform.pos.y - 5, transform.pos.x, transform.pos.y + 5, BLUE);
+            DrawLine(
+                transform.pos.x - 5, transform.pos.y, transform.pos.x + 5, transform.pos.y, BLUE);
+            DrawLine(
+                transform.pos.x, transform.pos.y - 5, transform.pos.x, transform.pos.y + 5, BLUE);
         });
 
         manager.runSystem<HitboxComponent>([](EntityId entity, HitboxComponent &hitbox) {
@@ -709,16 +733,17 @@ int main() {
             for (auto enemy : enemyView) {
                 auto enemyTransform = manager.getComponent<TransformComponent>(enemy);
                 if (enemyTransform == nullptr)
-                continue;
-                
-                float actualBodyWidth = 40.0f;  
-                float actualBodyHeight = 40.0f; 
-                
+                    continue;
+
+                float actualBodyWidth = 40.0f;
+                float actualBodyHeight = 40.0f;
+
                 // 1. Convert the centered position directly to a Top/Bottom/Left/Right Box
-                // Since pos IS the center, we just step outwards by half the size in each direction.
-                float enemyLeft   = enemyTransform->pos.x - (actualBodyWidth / 2.0f);
-                float enemyRight  = enemyTransform->pos.x + (actualBodyWidth / 2.0f);
-                float enemyTop    = enemyTransform->pos.y - (actualBodyHeight / 2.0f);
+                // Since pos IS the center, we just step outwards by half the size in each
+                // direction.
+                float enemyLeft = enemyTransform->pos.x - (actualBodyWidth / 2.0f);
+                float enemyRight = enemyTransform->pos.x + (actualBodyWidth / 2.0f);
+                float enemyTop = enemyTransform->pos.y - (actualBodyHeight / 2.0f);
                 float enemyBottom = enemyTransform->pos.y + (actualBodyHeight / 2.0f);
 
                 // 2. Calculate the Hitbox's far edges
