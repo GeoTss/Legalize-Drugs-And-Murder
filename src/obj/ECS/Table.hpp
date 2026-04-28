@@ -25,7 +25,7 @@ struct Table {
 
     std::vector<EntityId> tableEntities;
 
-    std::array<size_t, MAX_COMPONENTS> column_mapping;
+    std::array<size_t, MAX_COMPONENTS> column_mapping{};
 
     TableID id;
 
