@@ -9,38 +9,37 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 
-# 1. Change default build type to Release (Debug disables optimizations!)
-# if(NOT CMAKE_BUILD_TYPE)
-#     set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
-# endif()
+if(NOT CMAKE_BUILD_TYPE)
+    set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
+endif()
 
-set(CMAKE_BUILD_TYPE Debug)
+# set(CMAKE_BUILD_TYPE Debug)
 
 add_executable(${PROJECT_NAME} ${SOURCES} ${HEADERS})
 
-# 2. Explicitly add -O3 optimizations based on the compiler
-# if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-#     target_compile_options(${PROJECT_NAME} PRIVATE 
-#         -O3
-#         -march=native     # Target the specific CPU of the machine building the code
-#         -ffast-math       # Breaks some IEEE standards for 2x speed in physics
-#         -flto             # Link time optimization
-#         -funroll-loops    # Aggressive loop unrolling
-#         -fomit-frame-pointer 
-#         -fstrict-aliasing
-#         -Rpass=loop-vectorize # Keep this to see optimization reports
-#     )
-#     # Ensure the linker also uses LTO
-#     target_link_options(${PROJECT_NAME} PRIVATE -flto)
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(${PROJECT_NAME} PRIVATE 
+        -O3
+        -march=native     # Target the specific CPU of the machine building the code
+        -ffast-math       # Breaks some IEEE standards for 2x speed in physics
+        # -flto             # Link time optimization
+        -funroll-loops    # Aggressive loop unrolling
+        -fomit-frame-pointer 
+        -fstrict-aliasing
+        -Rpass=loop-vectorize # Keep this to see optimization reports
+        -fsave-optimization-record
+    )
+    # Ensure the linker also uses LTO
+    # target_link_options(${PROJECT_NAME} PRIVATE -flto)
 
-#     # Tell the linker where to find Homebrew's libc++
-#     target_link_directories(texnologia-polymeswn PRIVATE /opt/homebrew/opt/llvm/lib/c++)
+    # Tell the linker where to find Homebrew's libc++
+    target_link_directories(texnologia-polymeswn PRIVATE /opt/homebrew/opt/llvm/lib/c++)
 
-#     # Tell the final executable to load this specific library at runtime (rpath)
-#     target_link_options(texnologia-polymeswn PRIVATE -Wl,-rpath,/opt/homebrew/opt/llvm/lib/c++)
-# elseif(MSVC)
-#     target_compile_options(${PROJECT_NAME} PRIVATE /O2) # MSVC equivalent of -O3
-# endif()
+    # Tell the final executable to load this specific library at runtime (rpath)
+    target_link_options(texnologia-polymeswn PRIVATE -Wl,-rpath,/opt/homebrew/opt/llvm/lib/c++)
+elseif(MSVC)
+    target_compile_options(${PROJECT_NAME} PRIVATE /O2) # MSVC equivalent of -O3
+endif()
 # set_target_properties(${PROJECT_NAME} PROPERTIES INTERPROCEDURAL_OPTIMIZATION TRUE)
 
 set(BASE_ASSET_DIR "${CMAKE_SOURCE_DIR}/assets")
