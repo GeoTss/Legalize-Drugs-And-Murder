@@ -6,6 +6,7 @@
 #include <chrono>
 
 namespace GameSystems {
+    void updateCamera(Camera2D& camera, const TransformComponent* transform);
     void UpdateInput(Manager& manager);
     void UpdatePlayerLogic(Manager& manager, float dt);
     void UpdateEnemyLogic(Manager& manager, float dt, Vector2 playerPos);

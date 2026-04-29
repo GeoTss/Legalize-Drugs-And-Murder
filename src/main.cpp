@@ -13,6 +13,12 @@
 #include "obj/MapGenerator.hpp"
 
 int main() {
+#ifdef NDEBUG
+    std::cout << "In Release mode.\n";
+#else
+    std::cout << "In Debug mode.\n";
+#endif
+
     InitWindow(800, 600, "My ECS Game");
     SetTargetFPS(120);
 
@@ -25,11 +31,13 @@ int main() {
     initializeEnemyAnimations(spriteManager, eventDispatcher);
 
     EntityId hunter = spawnPlayer(manager, spriteManager);
-    EntityId enemy = spawnEnemy(manager, spriteManager);
+    for (int i = 0; i < 10; ++i) {
+        EntityId enemy = spawnEnemy(manager, spriteManager, rand() % 700 + 500, rand() % 100 + 10);
+    }
 
     loadMap(manager, 1572);
 
-    // Load Assets
+    
     Texture2D tilesetTexture =
         LoadTexture(ASSET_PATH "/Tiny Swords (Free Pack)/Terrain/Tileset/Tilemap_color5.png");
     Texture2D waterTexture = LoadTexture(
@@ -39,39 +47,26 @@ int main() {
     camera.offset = {800.0f / 2.0f, 600.0f / 2.0f};
     camera.zoom = 1.0f;
 
-    // --- GAME LOOP ---
     while (!WindowShouldClose()) {
         float dt = GetFrameTime();
         auto nowTime = std::chrono::steady_clock::now();
 
-        // Update Camera
         auto hunterTransform = manager.getComponent<TransformComponent>(hunter);
         if (hunterTransform) {
-            float halfScreenW = (800.0f / 2.0f) / camera.zoom;
-            float halfScreenH = (600.0f / 2.0f) / camera.zoom;
-            camera.target.x = std::clamp(
-                hunterTransform->pos.x, halfScreenW, (MAP_WIDTH * TILE_SIZE) - halfScreenW);
-            camera.target.y = std::clamp(
-                hunterTransform->pos.y, halfScreenH, (MAP_HEIGHT * TILE_SIZE) - halfScreenH);
+            GameSystems::updateCamera(camera, hunterTransform);
         }
 
-        // --- ECS PIPELINE ---
         GameSystems::UpdateInput(manager);
         GameSystems::UpdatePlayerLogic(manager, dt);
 
         if (hunterTransform) {
             GameSystems::UpdateEnemyLogic(manager, dt, hunterTransform->pos);
         }
-        BeginDrawing();
-        ClearBackground({20, 160, 210, 255});
-        BeginMode2D(camera);
-        GameSystems::Render(manager, camera, waterTexture, tilesetTexture);
         AnimationSystem::update(manager, spriteManager, eventDispatcher, dt);
-
         GameSystems::UpdateCombatAndHitboxes(manager, dt, nowTime);
-        EndMode2D();
-        DrawText(TextFormat("%d fps", GetFPS()), 10, 10, 25, WHITE);
-        EndDrawing();
+
+        GameSystems::Render(manager, camera, waterTexture, tilesetTexture);
+
         GameSystems::Cleanup(manager, dt);
     }
 

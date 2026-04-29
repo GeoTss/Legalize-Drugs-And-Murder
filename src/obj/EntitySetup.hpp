@@ -7,4 +7,4 @@ void initializeCharacterAnimations(SpriteManager &spriteManager, EventDispatcher
 void initializeEnemyAnimations(SpriteManager &spriteManager, EventDispatcher &eventDispatcher);
 
 EntityId spawnPlayer(Manager& manager, SpriteManager& spriteManager);
-EntityId spawnEnemy(Manager& manager, SpriteManager& spriteManager);
+EntityId spawnEnemy(Manager& manager, SpriteManager& spriteManager, float, float y);

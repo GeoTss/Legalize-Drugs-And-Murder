@@ -125,11 +125,11 @@ EntityId spawnPlayer(Manager &manager, SpriteManager &spriteManager) {
     return hunter;
 }
 
-EntityId spawnEnemy(Manager &manager, SpriteManager &spriteManager) {
+EntityId spawnEnemy(Manager &manager, SpriteManager &spriteManager, float x, float y) {
     auto enemy = manager.addEntity();
     manager.addComponent<EnemyTag>(enemy);
 
-    TransformComponent enemyTransformComp = {{700, 100}};
+    TransformComponent enemyTransformComp = {{x, y}};
     HealthComponent enemyHealthComp = {.health = 100.f};
     StatsComponent enemyStats = {.attackPower = 10.f, .hitboxScale = 1.f, .speed = 35.f};
     StateComponent enemyStateComp = {.stateID = (uint8_t)enemyStates::IDLE};
