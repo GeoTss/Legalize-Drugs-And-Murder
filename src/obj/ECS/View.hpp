@@ -8,11 +8,9 @@
 
 template <typename... Components> struct View {
     Manager *manager;
-    std::vector<Archetype *> matchedArchetypes;
+    const std::vector<Archetype *>& matchedArchetypes;
 
-    View(Manager *_manager) : manager{_manager} {
-        matchedArchetypes = manager->queryArchtypes<Components...>();
-    }
+    View(Manager *_manager) : manager{_manager}, matchedArchetypes{manager->queryArchtypes<Components...>()} {}
 
     struct Iterator {
         using iterator_category = std::forward_iterator_tag;
