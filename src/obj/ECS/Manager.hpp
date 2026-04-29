@@ -15,6 +15,7 @@
 #include "Entity.hpp"
 #include "PagedColumn.hpp"
 #include "Table.hpp"
+#include "ThreadPool.hpp"
 
 template <typename... Ts> struct TypeList {};
 template <typename L1, typename L2> struct ConcatLists;
@@ -33,6 +34,13 @@ template <typename T, typename... Rest> struct FilterEmpty<T, Rest...> {
                              typename FilterEmpty<Rest...>::type>::type;
 };
 
+enum class Exec { Seq, Par };
+
+namespace execution {
+struct par_t {};
+inline constexpr par_t par{};
+}; // namespace execution
+
 struct Record {
     Archetype *archetype = nullptr;
     size_t row = -1;
@@ -50,7 +58,7 @@ struct Manager {
     std::unordered_map<ArchSignature_t, Archetype> archetype_index;
     std::unordered_map<ArchetypeId, Archetype *> archetypeIdIndex;
 
-    std::vector<std::pair<ArchSignature_t, std::vector<Archetype *> *>> active_queries;
+    std::unordered_map<ArchSignature_t, std::vector<Archetype *>> query_cache;
 
     std::unordered_map<TableSignature_t, Table> table_index;
     std::unordered_map<TableID, Table *> tableIdIndex;
@@ -58,6 +66,8 @@ struct Manager {
     EntityId entityIdCount = 0;
     ArchetypeId archetypeIdCount = 0;
     TableID tableIdCount = 0;
+
+    ThreadPool threadPool;
 
     EntityId addEntity() {
         uint32_t index;
@@ -125,8 +135,8 @@ struct Manager {
 
                         std::memcpy(hole_dest, last_src, component_size[cid]);
                     }
-                } 
-                
+                }
+
                 table->tableEntities.pop_back();
 
                 for (ComponentId cid : table->componentIds) {
@@ -287,7 +297,6 @@ struct Manager {
             }
         }
 
-
         record.archetype = nextArchtype;
         record.row = newRow;
     }
@@ -439,7 +448,7 @@ struct Manager {
         } else {
             ArchSignature_t newSignature = currentArchtype->typeSet;
             newSignature.reset(component);
-            
+
             if (newSignature.any()) {
                 nextArchtype = getOrCreateArchetype(newSignature);
                 edge.remove = nextArchtype;
@@ -460,7 +469,7 @@ struct Manager {
         }
 
         size_t newRow = 0;
-        
+
         if (newTable != nullptr) {
             newRow = newTable->tableEntities.size();
             newTable->tableEntities.push_back(entity);
@@ -500,12 +509,12 @@ struct Manager {
 
                 std::memcpy(hole_dest, last_src, component_size[cid]);
             }
-            
+
             uint32_t lastEntityIdx = getEntityIndex(lastEntity);
             entity_index[lastEntityIdx].row = oldRow;
             oldTable->tableEntities[oldRow] = lastEntity;
-        } 
-        
+        }
+
         for (ComponentId cid : oldTable->componentIds) {
             size_t col = oldTable->column_mapping[cid];
             oldTable->components[col].pop_back();
@@ -542,38 +551,41 @@ struct Manager {
     }
 
     template <typename... Components> const std::vector<Archetype *> &queryArchtypes() {
-        static const ArchSignature_t querySig = []() {
-            ArchSignature_t sig;
-            (sig.set(ComponentID<Components>::_id), ...);
-            return sig;
-        }();
+        ArchSignature_t targetSig;
+        (targetSig.set(ComponentID<Components>::_id), ...);
 
-        static std::vector<Archetype *> queryRes;
-        static bool initialized = false;
+        auto [it, inserted] = query_cache.try_emplace(targetSig);
 
-        if (!initialized) {
-            for (auto &[archId, arch] : archetypeIdIndex) {
-                if ((arch->typeSet & querySig) == querySig) {
-                    queryRes.push_back(arch);
+        if (inserted) {
+            for (auto &[sig, arch] : archetype_index) {
+                if ((sig & targetSig) == targetSig) {
+                    it->second.push_back(&arch);
                 }
             }
-            active_queries.push_back({querySig, &queryRes});
-            initialized = true;
         }
-        return queryRes;
+
+        return it->second;
     }
 
     template <typename... Components, typename Func> inline void runSystem(Func &&func) {
         if constexpr (sizeof...(Components) == 0)
             return;
         using FilteredList = typename FilterEmpty<Components...>::type;
-        runSystemImpl<Components...>(std::forward<Func>(func), FilteredList{});
+        runSystemImpl<Exec::Seq, Components...>(std::forward<Func>(func), FilteredList{});
+    }
+
+    template <typename... Components, typename Func>
+    inline void runSystem(execution::par_t, Func &&func) {
+        if constexpr (sizeof...(Components) == 0)
+            return;
+        using FilteredList = typename FilterEmpty<Components...>::type;
+        runSystemImpl<Exec::Par, Components...>(std::forward<Func>(func), FilteredList{});
     }
 
     template <typename... Ts> View<Ts...> view();
 
   private:
-    template <typename... Components, typename Func, typename... Filtered>
+    template <Exec Policy, typename... Components, typename Func, typename... Filtered>
     void runSystemImpl(Func &&systemFunction, TypeList<Filtered...>)
         requires std::is_invocable_v<Func, EntityId, Filtered &...>
     {
@@ -581,7 +593,8 @@ struct Manager {
 
         for (auto arch : queriedArchetypes) {
             Table *table = arch->dataTable;
-            if (!table || table->tableEntities.empty())
+
+            if (!table || table->tableEntities.empty() || table->components.empty())
                 continue;
 
             size_t total_entities = table->tableEntities.size();
@@ -591,32 +604,71 @@ struct Manager {
             auto columns = std::make_tuple(
                 &table->components[table->column_mapping[ComponentID<Filtered>::_id]]...);
 
-            for (size_t p = 0; p < total_pages; ++p) {
+            if constexpr (Policy == Exec::Par) {
+                // --- PARALLEL BATCHING ---
+                size_t num_threads = threadPool.getThreadCount();
+                size_t pages_per_batch = (total_pages + num_threads - 1) / num_threads;
 
-                size_t count =
-                    (p == total_pages - 1 && total_entities % PagedColumn::ENTITIES_PER_PAGE != 0)
-                        ? (total_entities % PagedColumn::ENTITIES_PER_PAGE)
-                        : PagedColumn::ENTITIES_PER_PAGE;
+                for (size_t t = 0; t < num_threads; ++t) {
+                    size_t start_page = t * pages_per_batch;
+                    if (start_page >= total_pages)
+                        break;
+                    size_t end_page = std::min(start_page + pages_per_batch, total_pages);
 
-                const EntityId *entity_array =
-                    table->tableEntities.data() + (p * PagedColumn::ENTITIES_PER_PAGE);
+                    threadPool.enqueue(
+                        [start_page, end_page, total_entities, table, columns, &systemFunction]() {
+                            for (size_t p = start_page; p < end_page; ++p) {
+                                size_t count =
+                                    total_entities - (p * PagedColumn::ENTITIES_PER_PAGE);
+                                if (count > PagedColumn::ENTITIES_PER_PAGE)
+                                    count = PagedColumn::ENTITIES_PER_PAGE;
 
-                std::apply(
-                    [&](auto *...col) {
-                        auto execute_hot_loop = [&](auto *...raw_arrays) {
-                            for (size_t i = 0; i < count; ++i) {
-                                systemFunction(entity_array[i], raw_arrays[i]...);
+                                const EntityId *entity_array = table->tableEntities.data() +
+                                                               (p * PagedColumn::ENTITIES_PER_PAGE);
+
+                                std::apply(
+                                    [&](auto *...col) {
+                                        auto execute_hot_loop = [&](auto *...raw_arrays) {
+                                            for (size_t i = 0; i < count; ++i) {
+                                                systemFunction(entity_array[i], raw_arrays[i]...);
+                                            }
+                                        };
+                                        execute_hot_loop(
+                                            static_cast<Filtered *>(col->get_page_data(p))...);
+                                    },
+                                    columns);
                             }
-                        };
+                        });
+                }
 
-                        execute_hot_loop(static_cast<Filtered *>(col->get_page_data(p))...);
-                    },
-                    columns);
+                threadPool.wait_for_all();
+
+            } else {
+                // --- SEQUENTIAL EXECUTION ---
+                for (size_t p = 0; p < total_pages; ++p) {
+                    size_t count = total_entities - (p * PagedColumn::ENTITIES_PER_PAGE);
+                    if (count > PagedColumn::ENTITIES_PER_PAGE)
+                        count = PagedColumn::ENTITIES_PER_PAGE;
+
+                    const EntityId *entity_array =
+                        table->tableEntities.data() + (p * PagedColumn::ENTITIES_PER_PAGE);
+
+                    std::apply(
+                        [&](auto *...col) {
+                            auto execute_hot_loop = [&](auto *...raw_arrays) {
+                                for (size_t i = 0; i < count; ++i) {
+                                    systemFunction(entity_array[i], raw_arrays[i]...);
+                                }
+                            };
+                            execute_hot_loop(static_cast<Filtered *>(col->get_page_data(p))...);
+                        },
+                        columns);
+                }
             }
         }
     }
 
-    template <typename... Components, typename Func, typename... Filtered>
+    template <Exec Policy, typename... Components, typename Func, typename... Filtered>
     void runSystemImpl(Func &&systemFunction, TypeList<Filtered...>)
         requires std::is_invocable_v<Func, Filtered &...>
     {
@@ -624,7 +676,8 @@ struct Manager {
 
         for (auto arch : queriedArchetypes) {
             Table *table = arch->dataTable;
-            if (!table || table->tableEntities.empty())
+
+            if (!table || table->tableEntities.empty() || table->components.empty())
                 continue;
 
             size_t total_entities = table->tableEntities.size();
@@ -634,27 +687,61 @@ struct Manager {
             auto columns = std::make_tuple(
                 &table->components[table->column_mapping[ComponentID<Filtered>::_id]]...);
 
-            for (size_t p = 0; p < total_pages; ++p) {
+            if constexpr (Policy == Exec::Par) {
+                // --- PARALLEL BATCHING ---
+                size_t num_threads = threadPool.getThreadCount();
+                size_t pages_per_batch = (total_pages + num_threads - 1) / num_threads;
 
-                size_t count =
-                    (p == total_pages - 1 && total_entities <= PagedColumn::ENTITIES_PER_PAGE)
-                        ? total_entities
-                        : PagedColumn::ENTITIES_PER_PAGE;
+                for (size_t t = 0; t < num_threads; ++t) {
+                    size_t start_page = t * pages_per_batch;
+                    if (start_page >= total_pages)
+                        break;
 
-                const EntityId *entity_array =
-                    table->tableEntities.data() + (p * PagedColumn::ENTITIES_PER_PAGE);
+                    size_t end_page = std::min(start_page + pages_per_batch, total_pages);
 
-                std::apply(
-                    [&](auto *...col) {
-                        auto execute_hot_loop = [&](auto *...raw_arrays) {
-                            for (size_t i = 0; i < count; ++i) {
-                                systemFunction(raw_arrays[i]...);
+                    threadPool.enqueue(
+                        [start_page, end_page, total_entities, table, columns, &systemFunction]() {
+                            for (size_t p = start_page; p < end_page; ++p) {
+                                size_t count =
+                                    total_entities - (p * PagedColumn::ENTITIES_PER_PAGE);
+                                if (count > PagedColumn::ENTITIES_PER_PAGE)
+                                    count = PagedColumn::ENTITIES_PER_PAGE;
+
+                                std::apply(
+                                    [&](auto *...col) {
+                                        auto execute_hot_loop = [&](auto *...raw_arrays) {
+                                            for (size_t i = 0; i < count; ++i) {
+                                                systemFunction(raw_arrays[i]...);
+                                            }
+                                        };
+                                        execute_hot_loop(
+                                            static_cast<Filtered *>(col->get_page_data(p))...);
+                                    },
+                                    columns);
                             }
-                        };
+                        });
+                }
 
-                        execute_hot_loop(static_cast<Filtered *>(col->get_page_data(p))...);
-                    },
-                    columns);
+                threadPool.wait_for_all();
+
+            } else {
+                // --- SEQUENTIAL EXECUTION ---
+                for (size_t p = 0; p < total_pages; ++p) {
+                    size_t count = total_entities - (p * PagedColumn::ENTITIES_PER_PAGE);
+                    if (count > PagedColumn::ENTITIES_PER_PAGE)
+                        count = PagedColumn::ENTITIES_PER_PAGE;
+
+                    std::apply(
+                        [&](auto *...col) {
+                            auto execute_hot_loop = [&](auto *...raw_arrays) {
+                                for (size_t i = 0; i < count; ++i) {
+                                    systemFunction(raw_arrays[i]...);
+                                }
+                            };
+                            execute_hot_loop(static_cast<Filtered *>(col->get_page_data(p))...);
+                        },
+                        columns);
+                }
             }
         }
     }
@@ -681,7 +768,7 @@ struct Manager {
 
         size_t col = 0;
         for (size_t i = 0; i < MAX_COMPONENTS; ++i) {
-            if (signature.test(i)) {
+            if (signature.test(i) && component_size[i] > 0) {
                 newTable.componentIds.push_back(i);
                 newTable.column_mapping[i] = col++;
 
@@ -703,23 +790,12 @@ struct Manager {
         newArchtype.typeSet = signature;
         archetypeIdIndex[newId] = &newArchtype;
 
-        TableSignature_t tableSig;
-        size_t trueSize = 0;
-        for (size_t i = 0; i < MAX_COMPONENTS; ++i) {
-            if (signature.test(i)) {
-                if (component_size[i] > 0) {
-                    tableSig.set(i);
-                    trueSize++;
-                }
-            }
-        }
+        newArchtype.trueComponentCount = signature.count();
+        newArchtype.dataTable = getOrCreateTable(signature);
 
-        newArchtype.trueComponentCount = trueSize;
-        newArchtype.dataTable = getOrCreateTable(tableSig);
-
-        for (auto &[querySignature, queryCachePtr] : active_queries) {
+        for (auto &[querySignature, matchedCache] : query_cache) {
             if ((signature & querySignature) == querySignature) {
-                queryCachePtr->push_back(&newArchtype);
+                matchedCache.push_back(&newArchtype);
             }
         }
 
