@@ -9,69 +9,23 @@
 
 #include "ECS/Manager.hpp"
 #include "ECS/Component.hpp"
-
-constexpr uint64_t fnv1a_64(const char *str, size_t len) {
-    uint64_t hash = 0xcbf29ce484222325ULL;
-    for (size_t i = 0; i < len; ++i) {
-        hash ^= static_cast<uint64_t>(str[i]);
-        hash *= 0x100000001b3ULL;
-    }
-    return hash;
-}
-
-template <typename T> constexpr uint64_t typeHash() {
-#if defined(__clang__) || defined(__GNUC__)
-    return fnv1a_64(__PRETTY_FUNCTION__, sizeof(__PRETTY_FUNCTION__) - 1);
-#elif defined(_MSC_VER)
-    return fnv1a_64(__FUNCSIG__, sizeof(__FUNCSIG__) - 1);
-#else
-#error "Unsupported compiler for compile-time type hashing."
-#endif
-}
-
-template <typename... Tags> constexpr uint64_t hashTags() {
-    if constexpr (sizeof...(Tags) == 0) {
-        return 0;
-    } else {
-
-        uint64_t hashes[] = {typeHash<Tags>()...};
-        constexpr size_t count = sizeof...(Tags);
-
-        for (size_t i = 0; i < count; ++i) {
-            for (size_t j = 0; j < count - i - 1; ++j) {
-                if (hashes[j] > hashes[j + 1]) {
-                    uint64_t temp = hashes[j];
-                    hashes[j] = hashes[j + 1];
-                    hashes[j + 1] = temp;
-                }
-            }
-        }
-
-        uint64_t combined = 0xcbf29ce484222325ULL;
-        for (size_t i = 0; i < count; ++i) {
-            combined ^= hashes[i];
-            combined *= 0x100000001b3ULL;
-        }
-        return combined;
-    }
-}
+#include "ECS/CommandBuffer.hpp" // <-- Include the Command Buffer
 
 struct EventDispatcher {
-    std::unordered_map<uint64_t, std::function<void(Manager &, const EntityId, const EntityId)>> eventMap;
+    std::unordered_map<uint64_t, std::function<void(DeferredCommandBuffer &, const EntityId, const EntityId)>> eventMap;
 
     uint64_t nextEventId = 1;
 
     template <typename... Tags> uint64_t registerEvent() {
         uint64_t id = nextEventId++;
 
-        // constexpr uint64_t hash = hashTags<Tags...>();
-
-        eventMap[id] = [](Manager &manager, const EntityId eventEntity, const EntityId srcEntity) {
-            AnimationEventComponent eventComp = {
-                .sourceEntity = srcEntity};
+        eventMap[id] = [](DeferredCommandBuffer &cmd, const EntityId eventEntity, const EntityId srcEntity) {
+            AnimationEventComponent eventComp = { .sourceEntity = srcEntity};
+            cmd.addComponent<AnimationEventComponent>(eventEntity, eventComp);
             
-            manager.addComponent<AnimationEventComponent>(eventEntity, &eventComp);
-            manager.addComponents<Tags...>(eventEntity);
+            if constexpr (sizeof...(Tags) > 0) {
+                (cmd.addComponent<Tags>(eventEntity), ...); 
+            }
         };
 
         return id;
@@ -79,25 +33,22 @@ struct EventDispatcher {
 
     template <typename T> 
     uint64_t registerPayloadEvent(T payloadData) {
-        // constexpr uint64_t hash = hashTags<T>();
         uint64_t id = nextEventId++;
         
-        eventMap[id] = [payloadData](Manager &manager, const EntityId eventEntity, const EntityId srcEntity) {
-            
+        eventMap[id] = [payloadData](DeferredCommandBuffer &cmd, const EntityId eventEntity, const EntityId srcEntity) {
             AnimationEventComponent eventComp = { .sourceEntity = srcEntity };
-            manager.addComponent<AnimationEventComponent>(eventEntity, &eventComp);
+            cmd.addComponent<AnimationEventComponent>(eventEntity, eventComp);
             
-            T localData = payloadData;
-            manager.addComponent<T>(eventEntity, &localData);
+            cmd.addComponent<T>(eventEntity, payloadData);
         };
 
         return id;
     }
 
-    void dispatchConstruction(Manager &manager, const EntityId eventEntity, const EntityId srcEntity, uint64_t hash) {
+    void dispatchConstruction(DeferredCommandBuffer &cmd, const EntityId eventEntity, const EntityId srcEntity, uint64_t hash) {
         auto it = eventMap.find(hash);
         if (it != eventMap.end())
-            it->second(manager, eventEntity, srcEntity);
+            it->second(cmd, eventEntity, srcEntity);
     }
 };
 

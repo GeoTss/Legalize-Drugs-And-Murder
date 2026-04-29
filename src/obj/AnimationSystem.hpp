@@ -10,6 +10,9 @@
 
 #include "./ECS/Manager.hpp"
 #include "./ECS/View.hpp"
+#include "./ECS/Component.hpp"
+#include "./ECS/CommandBuffer.hpp"
+
 #include "EventDispatcher.hpp"
 #include "SpriteManager.hpp"
 
@@ -21,24 +24,20 @@ constexpr uint32_t HashState(const char *str) {
     return hash;
 }
 
-struct AnimationStateComponent {
-    AnimationProfile *profile = nullptr;
-    uint32_t currentFrame = 0;
-    float stateTimer = 0.f;
-    int lastProcessedFrame = -1;
-};
-
 using namespace std::chrono_literals;
 
 struct AnimationSystem {
-    // 1. ADDED Camera3D TO THE ARGUMENTS
     static void
     update(Manager &manager, SpriteManager &spriteManager, EventDispatcher &dispatcher, float dt) {
+        
+        DeferredCommandBuffer cmd(manager);
+        
+
         manager.runSystem<TransformComponent, AnimationStateComponent, StateComponent>(
-            [&manager, &spriteManager, &dispatcher, dt](EntityId entity,
-                                                        TransformComponent &transform,
-                                                        AnimationStateComponent &anim,
-                                                        StateComponent &stateComponent) {
+            [&manager, &cmd, &dispatcher, dt](EntityId entity,
+                                                 TransformComponent &transform,
+                                                 AnimationStateComponent &anim,
+                                                 StateComponent &stateComponent) {
                 uint8_t currentState = stateComponent.stateID;
 
                 if (anim.profile == nullptr ||
@@ -51,35 +50,31 @@ struct AnimationSystem {
 
                 if (anim.stateTimer >= track.frameDuration) {
                     anim.stateTimer = 0;
-
                     anim.currentFrame += 1;
-
-                    if (anim.currentFrame >= track.frames.size()) {
-                        if (track.loop)
-                            anim.currentFrame = 0;
-                        else {
-                            anim.currentFrame = track.frames.size() - 1;
-                            manager.addComponent<AnimationCompleteTag>(entity);
-                        }
+                }
+                
+                if (anim.currentFrame >= track.frames.size()) {
+                    if (track.loop) anim.currentFrame = 0;
+                    else {
+                        anim.currentFrame = track.frames.size() - 1;
+                        cmd.addComponent<AnimationCompleteTag>(entity); 
                     }
                 }
 
                 if (anim.lastProcessedFrame != anim.currentFrame) {
                     auto eventIter = track.frameEvents.find(anim.currentFrame);
                     if (eventIter != track.frameEvents.end() && !eventIter->second.empty()) {
-
                         for (auto eventId : eventIter->second) {
-
+                        
                             auto eventEntityId = manager.addEntity();
-                            dispatcher.dispatchConstruction(
-                                manager, eventEntityId, entity, eventId);
+                            dispatcher.dispatchConstruction(cmd, eventEntityId, entity, eventId);
+                            
                         }
                     }
                     anim.lastProcessedFrame = anim.currentFrame;
                 }
 
                 uint32_t spriteIndex = track.frames[anim.currentFrame];
-
                 int columns = track.texture.width / track.frameWidth;
 
                 float srcX = (spriteIndex % columns) * track.frameWidth;
@@ -102,6 +97,8 @@ struct AnimationSystem {
 
                 DrawTexturePro(track.texture, sourceRec, destRec, origin, 0.0f, WHITE);
             });
+
+        cmd.execute();
     }
 };
 
