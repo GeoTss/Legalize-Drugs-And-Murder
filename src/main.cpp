@@ -5,7 +5,7 @@
 
 #include "obj/ECS/Manager.hpp"
 #include "obj/ECS/View.hpp"
-#include "obj/CommandBuffer.hpp"
+#include "obj/ECS/CommandBuffer.hpp"
 #include "obj/ECS/Timer/Timer.hpp"
 
 #define TEST_CLEAN_ENV(testFunc)                                                                   \
@@ -226,7 +226,7 @@ void testEntitylessSystem(Manager &m) {
 void testDeferredCommandBuffer(Manager &m) {
     std::cout << "[TEST] Deferred Command Buffer... ";
 
-    CommandBuffer cmd;
+    DeferredCommandBuffer cmd(m);
 
     EntityId e1 = m.addEntity();
     EntityId e2 = m.addEntity();
@@ -251,7 +251,7 @@ void testDeferredCommandBuffer(Manager &m) {
     });
 
     // Iterators are now finished. We can safely flush!
-    cmd.flush(m);
+    cmd.execute();
 
     // Verify the deferred changes were applied correctly
     assert(!m.isEntityValid(e1)); // e1 had Velocity, so it should be destroyed entirely
@@ -367,7 +367,7 @@ void testSequentialSystemsPipeline(Manager &m) {
 
     m.addComponents<Position, Velocity, Health, Poison>(player, &p, &v, &h, &poison);
 
-    CommandBuffer cmd;
+    DeferredCommandBuffer cmd(m);
 
     // SYSTEM 1: Movement
     m.runSystem<Position, Velocity>([](Position &pos, Velocity &vel) {
@@ -385,7 +385,7 @@ void testSequentialSystemsPipeline(Manager &m) {
             }
         });
 
-    cmd.flush(m); // Apply the DeadTag
+    cmd.execute(); // Apply the DeadTag
 
     // Validate the pipeline execution
     assert(m.getComponent<Position>(player)->y == 105.0f);    // Movement worked
