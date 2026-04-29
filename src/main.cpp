@@ -1,15 +1,18 @@
 #include <cassert>
 #include <iostream>
 #include <vector>
+#include <cmath>
 
-#include "obj/CommandBuffer.hpp"
 #include "obj/ECS/Manager.hpp"
+#include "obj/ECS/View.hpp"
+#include "obj/CommandBuffer.hpp"
+#include "obj/ECS/Timer/Timer.hpp"
 
-#define TEST_CLEAN_ENV(testFunc) \
-{ \
-    Manager manager; \
-    testFunc(manager);\
-}
+#define TEST_CLEAN_ENV(testFunc)                                                                   \
+    {                                                                                              \
+        Manager manager;                                                                           \
+        testFunc(manager);                                                                         \
+    }
 
 // ==========================================
 // DUMMY COMPONENTS FOR TESTING
@@ -25,6 +28,33 @@ struct Velocity {
 };
 
 struct TagComponent {}; // Tests the zero-byte component edge case
+
+struct Health {
+    float current = 100.0f;
+};
+struct Poison {
+    float dps = 5.0f;
+};
+struct DeadTag {};
+
+struct CompA {
+    int val = 1;
+};
+struct CompB {
+    int val = 2;
+};
+struct CompC {
+    int val = 3;
+};
+struct CompD {
+    int val = 4;
+};
+struct CompE {
+    int val = 5;
+};
+struct CompF {
+    int val = 6;
+};
 
 // ==========================================
 // TEST CASES
@@ -283,12 +313,335 @@ void testComponentInitialization(Manager &m) {
     std::cout << "PASSED\n";
 }
 
+void testSystemArchetypeFragmentation(Manager &m) {
+    std::cout << "[TEST] Archetype Fragmentation Iteration... ";
+
+    // We are going to spawn entities across 5 COMPLETELY DIFFERENT Archetypes (Tables).
+    // They all share Position and Velocity, but have different tags.
+    // A robust system iterator must seamlessly jump between all 5 tables without missing entities.
+
+    EntityId e1 = m.addEntity();
+    m.addComponents<Position, Velocity>(e1, new Position{0, 0}, new Velocity{1, 1});
+    EntityId e2 = m.addEntity();
+    m.addComponents<Position, Velocity, TagComponent>(
+        e2, new Position{0, 0}, new Velocity{1, 1}, nullptr);
+    EntityId e3 = m.addEntity();
+    m.addComponents<Position, Velocity, DeadTag>(
+        e3, new Position{0, 0}, new Velocity{1, 1}, nullptr);
+    EntityId e4 = m.addEntity();
+    m.addComponents<Position, Velocity, TagComponent, DeadTag>(
+        e4, new Position{0, 0}, new Velocity{1, 1}, nullptr, nullptr);
+
+    // e5 has Position, but NO velocity. It should be skipped!
+    EntityId e5 = m.addEntity();
+    m.addComponent<Position>(e5, new Position{0, 0});
+
+    int processedCount = 0;
+    m.runSystem<Position, Velocity>([&processedCount](EntityId e, Position &p, Velocity &v) {
+        p.x += v.dx;
+        processedCount++;
+    });
+
+    // Exactly 4 entities should have been processed across 4 different tables.
+    assert(processedCount == 4);
+
+    // Verify the math applied correctly across the fragmented memory
+    assert(m.getComponent<Position>(e1)->x == 1.0f);
+    assert(m.getComponent<Position>(e4)->x == 1.0f);
+
+    // Verify e5 was ignored by the query
+    assert(m.getComponent<Position>(e5)->x == 0.0f);
+
+    std::cout << "PASSED\n";
+}
+
+void testSequentialSystemsPipeline(Manager &m) {
+    std::cout << "[TEST] Sequential Systems & Command Buffer Pipeline... ";
+
+    // Simulates a real game loop where System A's math triggers System B's logic
+    EntityId player = m.addEntity();
+    Position p{0.0f, 90.0f}; // Just below the poison zone (100.0f)
+    Velocity v{0.0f, 15.0f}; // Will push player into the poison zone
+    Health h{10.0f};
+    Poison poison{15.0f}; // Deadly enough to kill in one tick
+
+    m.addComponents<Position, Velocity, Health, Poison>(player, &p, &v, &h, &poison);
+
+    CommandBuffer cmd;
+
+    // SYSTEM 1: Movement
+    m.runSystem<Position, Velocity>([](Position &pos, Velocity &vel) {
+        pos.y += vel.dy;
+    });
+
+    // SYSTEM 2: Environmental Hazard (Only applies if Y > 100)
+    m.runSystem<Position, Health, Poison>(
+        [&cmd](EntityId e, Position &pos, Health &hp, Poison &dmg) {
+            if (pos.y > 100.0f) {
+                hp.current -= dmg.dps;
+                if (hp.current <= 0) {
+                    cmd.addComponent<DeadTag>(e); // Queue structural change
+                }
+            }
+        });
+
+    cmd.flush(m); // Apply the DeadTag
+
+    // Validate the pipeline execution
+    assert(m.getComponent<Position>(player)->y == 105.0f);    // Movement worked
+    assert(m.getComponent<Health>(player)->current == -5.0f); // Damage worked
+    assert(m.has_component<DeadTag>(player)); // Feedback loop into structural change worked
+
+    std::cout << "PASSED\n";
+}
+
+void testMegaQueryTupleExpansion(Manager &m) {
+    std::cout << "[TEST] Mega Query (6+ Components) Tuple Expansion... ";
+
+    // This tests if `Table::column_mapping` and the variadic parameter pack unpacking
+    // inside `runSystem` accidentally misaligns pointers when dealing with massive queries.
+
+    EntityId boss = m.addEntity();
+    CompA a;
+    CompB b;
+    CompC c;
+    CompD d;
+    CompE e_comp;
+    CompF f;
+
+    m.addComponents<CompA, CompB, CompC, CompD, CompE, CompF>(boss, &a, &b, &c, &d, &e_comp, &f);
+
+    // Run a system that requires ALL 6 components, and mutates them
+    m.runSystem<CompA, CompB, CompC, CompD, CompE, CompF>(
+        [](CompA &ca, CompB &cb, CompC &cc, CompD &cd, CompE &ce, CompF &cf) {
+            ca.val *= 2; // 2
+            cb.val *= 2; // 4
+            cc.val *= 2; // 6
+            cd.val *= 2; // 8
+            ce.val *= 2; // 10
+            cf.val *= 2; // 12
+        });
+
+    // If tuple expansion or memory offsets are broken, these fetches will return garbage
+    assert(m.getComponent<CompA>(boss)->val == 2);
+    assert(m.getComponent<CompC>(boss)->val == 6);
+    assert(m.getComponent<CompF>(boss)->val == 12);
+
+    std::cout << "PASSED\n";
+}
+
+void testEmptyQuerySafety(Manager &m) {
+    std::cout << "[TEST] Empty Query Safety (No Matches)... ";
+
+    // Spawn an entity with Position, but run a system that wants Velocity.
+    // The engine should cleanly skip all tables and not throw a segfault or out-of-bounds array
+    // error.
+    EntityId e = m.addEntity();
+    Position p{10.0f, 10.0f};
+    m.addComponent<Position>(e, &p);
+
+    bool systemRan = false;
+    m.runSystem<Velocity>([&systemRan](Velocity &v) {
+        systemRan = true; // This should NEVER execute
+    });
+
+    assert(!systemRan && "System executed on unmatched archetype!");
+
+    std::cout << "PASSED\n";
+}
+
+void testViewIteratorRobustness(Manager& m) {
+    std::cout << "[TEST] View Iterator Robustness... ";
+
+    // Table 1 (Matches) - 2 entities
+    EntityId e1 = m.addEntity(); m.addComponents<Position, Velocity>(e1);
+    EntityId e2 = m.addEntity(); m.addComponents<Position, Velocity>(e2);
+    
+    // Table 2 (Doesn't match) - 1 entity
+    EntityId e3 = m.addEntity(); m.addComponents<Position, TagComponent>(e3);
+    
+    // Table 3 (Matches) - 1 entity
+    EntityId e4 = m.addEntity(); m.addComponents<Position, Velocity, DeadTag>(e4);
+
+    // Destroy e1 so Table 1 has a "hole" that got filled, testing if the iterator still reads exactly the right count
+    m.destroyEntity(e1);
+
+    int count = 0;
+    auto myView = m.view<Position, Velocity>();
+    
+    for (EntityId e : myView) {
+        count++;
+        // Ensure e3 never sneaks in
+        assert(e != e3 && "Iterator yielded an entity from the wrong archetype!");
+    }
+
+    // e2 and e4 should be the only ones processed
+    assert(count == 2 && "Iterator failed to yield the exact number of entities!");
+
+    std::cout << "PASSED\n";
+}
+
+void testComponentIdempotency(Manager& m) {
+    std::cout << "[TEST] Component Idempotency (Double Add/Remove)... ";
+
+    EntityId e = m.addEntity();
+    Position p{10.0f, 20.0f};
+    
+    // 1. Double Add
+    m.addComponent<Position>(e, &p);
+    m.addComponent<Position>(e, new Position{99.0f, 99.0f}); // Should safely ignore or overwrite, NOT change archetype
+    
+    // Ensure memory wasn't corrupted and the archetype didn't shift invalidly
+    assert(m.getComponent<Position>(e)->x == 10.0f || m.getComponent<Position>(e)->x == 99.0f);
+
+    // 2. Double Remove
+    m.removeComponent<Position>(e);
+    m.removeComponent<Position>(e); // Should safely do nothing
+
+    assert(m.getComponent<Position>(e) == nullptr);
+
+    // 3. Remove from empty entity
+    EntityId emptyEnt = m.addEntity();
+    m.removeComponent<Velocity>(emptyEnt); // Should safely return
+
+    std::cout << "PASSED\n";
+}
+
+void testEntityGenerationLimit(Manager& m) {
+    std::cout << "[TEST] Entity Generation Exhaustion (ABA Problem)... ";
+
+    EntityId firstId = m.addEntity();
+    uint32_t index = getEntityIndex(firstId);
+
+    // Kill and revive this exact index 4095 times
+    for (int i = 0; i < 4095; ++i) {
+        m.destroyEntity(firstId);
+        firstId = m.addEntity();
+        
+        // Assert we are actually recycling the exact same slot
+        assert(getEntityIndex(firstId) == index);
+    }
+
+    assert(getEntityGeneration(firstId) == 4095);
+
+    // Destroy it one last time. It should hit the cap of 4095 and REFUSE to go in the freeEnttIds list.
+    m.destroyEntity(firstId);
+
+    // The next created entity should get a brand new index, NOT the exhausted one!
+    EntityId newSlot = m.addEntity();
+    assert(getEntityIndex(newSlot) != index && "Engine recycled an exhausted generation ID!");
+
+    std::cout << "PASSED\n";
+}
+
+void testReverseSwapAndPopStress(Manager& m) {
+    std::cout << "[TEST] Reverse Swap-and-Pop Stress... ";
+
+    std::vector<EntityId> tracking;
+    for (int i = 0; i < 1000; ++i) {
+        EntityId e = m.addEntity();
+        m.addComponent<Position>(e, new Position{(float)i, (float)i});
+        tracking.push_back(e);
+    }
+
+    // Destroy every EVEN indexed entity starting from 0.
+    // This forces maximum memory fragmentation and rapid swap-and-pops.
+    for (int i = 0; i < 1000; i += 2) {
+        m.destroyEntity(tracking[i]);
+    }
+
+    // Now verify the ODD indexed entities survived and have exactly the right data
+    for (int i = 1; i < 1000; i += 2) {
+        Position* p = m.getComponent<Position>(tracking[i]);
+        assert(p != nullptr);
+        assert(p->x == (float)i); // If swap-and-pop overwrote the wrong row, this fails!
+    }
+
+    std::cout << "PASSED\n";
+}
+
+void testParallelExecutionCorrectness(Manager& m) {
+    std::cout << "[TEST] Parallel Execution Correctness... ";
+
+    // Spawn 10,000 entities across a few different archetypes
+    Position p{0.0f, 0.0f};
+    Velocity v{1.0f, 2.0f};
+
+    std::vector<EntityId> tracking;
+    for (int i = 0; i < 10000; ++i) {
+        EntityId e = m.addEntity();
+        if (i % 2 == 0) {
+            m.addComponents<Position, Velocity>(e, &p, &v);
+        } else {
+            m.addComponents<Position, Velocity, TagComponent>(e, &p, &v, nullptr);
+        }
+        tracking.push_back(e);
+    }
+
+    // Run the system in PARALLEL
+    m.runSystem<Position, Velocity>(execution::par, [](EntityId e, Position& pos, Velocity& vel) {
+        pos.x += vel.dx;
+        pos.y += vel.dy;
+    });
+
+    // Verify the math applied perfectly to every single entity
+    for (EntityId e : tracking) {
+        Position* res = m.getComponent<Position>(e);
+        assert(res != nullptr);
+        assert(res->x == 1.0f && "Parallel chunking missed an entity's X value!");
+        assert(res->y == 2.0f && "Parallel chunking missed an entity's Y value!");
+    }
+
+    std::cout << "PASSED\n";
+}
+
+void benchmarkSystemExecution(Manager& m) {
+    std::cout << "\n========================================\n";
+    std::cout << "   BENCHMARK: SEQUENTIAL VS PARALLEL    \n";
+    std::cout << "========================================\n";
+
+    // 1. Spawn 1 MILLION entities. 
+    // This forces the PagedColumn to allocate nearly 1,000 pages.
+    std::cout << "Spawning 1,000,000 entities... ";
+    Position p{0.0f, 0.0f};
+    Velocity v{1.0f, 1.0f};
+    
+    for (int i = 0; i < 1'000'000; ++i) {
+        EntityId e = m.addEntity();
+        m.addComponents<Position, Velocity>(e, &p, &v);
+    }
+    std::cout << "Done.\n\n";
+
+    // 2. A heavily unoptimized payload to simulate complex game logic (like AI or Physics)
+    auto heavyPayload = [](EntityId e, Position& pos, Velocity& vel) {
+        // Run an expensive loop per entity to make the CPU sweat
+        for (int i = 0; i < 50; ++i) { 
+            pos.x += std::sin(pos.x * vel.dx) * 0.001f;
+            pos.y += std::cos(pos.y * vel.dy) * 0.001f;
+        }
+    };
+
+    // 3. Sequential Benchmark
+    {
+        std::cout << "[Running Sequential System (1 Core)]\n";
+        __TIME_IT__
+        m.runSystem<Position, Velocity>(heavyPayload); // Defaults to Exec::Seq
+    }
+
+    // 4. Parallel Benchmark
+    {
+        std::cout << "[Running Parallel System (All Cores)]\n";
+        __TIME_IT__
+        m.runSystem<Position, Velocity>(execution::par, heavyPayload); // Tag dispatched to Exec::Par
+    }
+    
+    std::cout << "========================================\n\n";
+}
+
 int main() {
     std::cout << "========================================\n";
     std::cout << "    ECS ARCHITECTURE TEST SUITE         \n";
     std::cout << "========================================\n";
-
-    Manager manager;
 
     TEST_CLEAN_ENV(testEntityLifecycle);
     TEST_CLEAN_ENV(testComponentInitialization);
@@ -297,6 +650,20 @@ int main() {
     TEST_CLEAN_ENV(testPagedColumnBoundariesAndSystems);
     TEST_CLEAN_ENV(testEntitylessSystem);
     TEST_CLEAN_ENV(testDeferredCommandBuffer);
+
+    TEST_CLEAN_ENV(testSystemArchetypeFragmentation);
+    TEST_CLEAN_ENV(testSequentialSystemsPipeline);
+    TEST_CLEAN_ENV(testMegaQueryTupleExpansion);
+    TEST_CLEAN_ENV(testEmptyQuerySafety);
+
+    TEST_CLEAN_ENV(testViewIteratorRobustness);
+    TEST_CLEAN_ENV(testComponentIdempotency)
+    TEST_CLEAN_ENV(testEntityGenerationLimit)
+    TEST_CLEAN_ENV(testReverseSwapAndPopStress)
+
+    TEST_CLEAN_ENV(testParallelExecutionCorrectness);
+
+    TEST_CLEAN_ENV(benchmarkSystemExecution);
 
     std::cout << "========================================\n";
     std::cout << " ALL TESTS COMPLETED SUCCESSFULLY!      \n";
