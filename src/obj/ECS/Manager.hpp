@@ -39,7 +39,7 @@ enum class Exec { Seq, Par };
 namespace execution {
 struct par_t {};
 inline constexpr par_t par{};
-}; // namespace execution
+};
 
 struct Record {
     Archetype *archetype = nullptr;
@@ -56,18 +56,18 @@ struct Manager {
     std::vector<EntityId> freeEnttIds;
 
     std::unordered_map<ArchSignature_t, Archetype> archetype_index;
-    std::unordered_map<ArchetypeId, Archetype *> archetypeIdIndex;
-
+    std::vector<Archetype*> archetypeIdIndex;
+    
     std::unordered_map<ArchSignature_t, std::vector<Archetype *>> query_cache;
 
-    std::unordered_map<TableSignature_t, Table> table_index;
-    std::unordered_map<TableID, Table *> tableIdIndex;
-
     EntityId entityIdCount = 0;
-    ArchetypeId archetypeIdCount = 0;
-    TableID tableIdCount = 0;
+    ArchetypeId archetypeIdCount = 1;
 
     ThreadPool threadPool;
+
+    Manager(){
+        archetypeIdIndex.push_back(nullptr);
+    }
 
     EntityId addEntity() {
         uint32_t index;
@@ -108,41 +108,28 @@ struct Manager {
 
         if (record.archetype != nullptr) {
             Archetype *arch = record.archetype;
-            Table *table = arch->dataTable;
+            Table &table = arch->dataTable;
 
-            auto entIt = std::find(arch->entities.begin(), arch->entities.end(), entity);
-            if (entIt != arch->entities.end()) {
-                *entIt = arch->entities.back();
-                arch->entities.pop_back();
+            size_t rowToDelete = record.row;
+            size_t lastRow = arch->entities.size() - 1;
+            EntityId entityToMove = arch->entities.back();
+
+            if (rowToDelete != lastRow) {
+                arch->entities[rowToDelete] = entityToMove;
+                entity_index[getEntityIndex(entityToMove)].row = rowToDelete;
+
+                for (ComponentId cid : table.componentIds) {
+                    size_t col = table.column_mapping[cid];
+                    void *dest = table.components[col].get(rowToDelete);
+                    void *src = table.components[col].get(lastRow);
+                    std::memcpy(dest, src, component_size[cid]);
+                }
             }
 
-            if (table != nullptr) {
-                size_t rowToDelete = record.row;
-                size_t lastRow = table->tableEntities.size() - 1;
-
-                if (rowToDelete != lastRow) {
-                    EntityId entityToMove = table->tableEntities[lastRow];
-                    uint32_t moveToIdx = getEntityIndex(entityToMove);
-
-                    table->tableEntities[rowToDelete] = entityToMove;
-                    entity_index[moveToIdx].row = rowToDelete;
-
-                    for (ComponentId cid : table->componentIds) {
-                        size_t col = table->column_mapping[cid];
-
-                        void *hole_dest = table->components[col].get(rowToDelete);
-                        void *last_src = table->components[col].get(lastRow);
-
-                        std::memcpy(hole_dest, last_src, component_size[cid]);
-                    }
-                }
-
-                table->tableEntities.pop_back();
-
-                for (ComponentId cid : table->componentIds) {
-                    size_t col = table->column_mapping[cid];
-                    table->components[col].pop_back();
-                }
+            arch->entities.pop_back();
+            for (ComponentId cid : table.componentIds) {
+                size_t col = table.column_mapping[cid];
+                table.components[col].pop_back();
             }
         }
 
@@ -166,15 +153,12 @@ struct Manager {
         uint32_t index = getEntityIndex(entity);
         Record &record = entity_index[index];
 
-        if (!record.archetype || !record.archetype->dataTable)
+        if (!record.archetype || !record.archetype->typeSet.test(component))
             return nullptr;
 
-        Table *table = record.archetype->dataTable;
-        if (!table->signature.test(component))
-            return nullptr;
-
-        size_t col = table->column_mapping[component];
-        return static_cast<T *>(table->components[col].get(record.row));
+        Table &table = record.archetype->dataTable;
+        size_t col = table.column_mapping[component];
+        return static_cast<T *>(table.components[col].get(record.row));
     }
 
     template <typename T> void setComponent(EntityId entity, T &component) {
@@ -213,82 +197,73 @@ struct Manager {
             nextArchtype = getOrCreateArchetype(rootArch);
         } else {
             ArchetypeEdge &edge = currentArchtype->edges[component];
-            if (edge.add != nullptr) {
-                nextArchtype = edge.add;
+            if (edge.add != 0) {
+                nextArchtype = archetypeIdIndex[edge.add];
             } else {
                 ArchSignature_t newSignature = currentArchtype->typeSet;
                 newSignature.set(component);
                 nextArchtype = getOrCreateArchetype(newSignature);
-                edge.add = nextArchtype;
-                nextArchtype->edges[component].remove = currentArchtype;
+                edge.add = nextArchtype->id;
+                nextArchtype->edges[component].remove = currentArchtype->id;
             }
         }
 
-        if (currentArchtype)
-            removeEntityFromArchetype(currentArchtype, entity);
-
-        nextArchtype->entities.push_back(entity);
-
-        Table *oldTable = currentArchtype ? currentArchtype->dataTable : nullptr;
-        Table *newTable = nextArchtype->dataTable;
-
-        if (oldTable == newTable) {
-            record.archetype = nextArchtype;
+        if (currentArchtype == nextArchtype) {
             return;
         }
 
-        size_t newRow = newTable->tableEntities.size();
-        newTable->tableEntities.push_back(entity);
+        size_t newRow = nextArchtype->entities.size();
+        nextArchtype->entities.push_back(entity);
 
-        for (ComponentId cid : newTable->componentIds) {
-            size_t col = newTable->column_mapping[cid];
-            newTable->components[col].push_back();
+        Table &newTable = nextArchtype->dataTable;
+        for (ComponentId cid : newTable.componentIds) {
+            size_t col = newTable.column_mapping[cid];
+            newTable.components[col].push_back();
         }
 
-        if (oldTable != nullptr) {
+        if (currentArchtype != nullptr) {
             size_t oldRow = record.row;
+            Table &oldTable = currentArchtype->dataTable;
 
-            for (ComponentId cid : oldTable->componentIds) {
-                if (!newTable->signature.test(cid))
+            for (ComponentId cid : oldTable.componentIds) {
+                if (!nextArchtype->typeSet.test(cid))
                     continue;
 
-                size_t oldCol = oldTable->column_mapping[cid];
-                size_t newCol = newTable->column_mapping[cid];
+                size_t oldCol = oldTable.column_mapping[cid];
+                size_t newCol = newTable.column_mapping[cid];
 
-                void *dest = newTable->components[newCol].get(newRow);
-                void *src = oldTable->components[oldCol].get(oldRow);
+                void *dest = newTable.components[newCol].get(newRow);
+                void *src = oldTable.components[oldCol].get(oldRow);
 
                 std::memcpy(dest, src, component_size[cid]);
             }
 
-            size_t lastRow = oldTable->tableEntities.size() - 1;
-            EntityId lastEntity = oldTable->tableEntities.back();
+            size_t lastRow = currentArchtype->entities.size() - 1;
+            EntityId lastEntity = currentArchtype->entities.back();
 
             if (oldRow != lastRow) {
-                for (ComponentId cid : oldTable->componentIds) {
-                    size_t col = oldTable->column_mapping[cid];
+                currentArchtype->entities[oldRow] = lastEntity;
+                entity_index[getEntityIndex(lastEntity)].row = oldRow;
 
-                    void *hole_dest = oldTable->components[col].get(oldRow);
-                    void *last_src = oldTable->components[col].get(lastRow);
-
-                    std::memcpy(hole_dest, last_src, component_size[cid]);
+                for (ComponentId cid : oldTable.componentIds) {
+                    size_t col = oldTable.column_mapping[cid];
+                    void *dest = oldTable.components[col].get(oldRow);
+                    void *src = oldTable.components[col].get(lastRow);
+                    std::memcpy(dest, src, component_size[cid]);
                 }
-                uint32_t lastEntityIdx = getEntityIndex(lastEntity);
-                entity_index[lastEntityIdx].row = oldRow;
-                oldTable->tableEntities[oldRow] = lastEntity;
             }
 
-            for (ComponentId cid : oldTable->componentIds) {
-                size_t col = oldTable->column_mapping[cid];
-                oldTable->components[col].pop_back();
+            currentArchtype->entities.pop_back();
+            for (ComponentId cid : oldTable.componentIds) {
+                size_t col = oldTable.column_mapping[cid];
+                oldTable.components[col].pop_back();
             }
-            oldTable->tableEntities.pop_back();
         }
 
         if constexpr (!std::is_empty_v<T>) {
             ComponentId cid = ComponentID<T>::_id;
-            size_t newCol = newTable->column_mapping[cid];
-            void *dest = newTable->components[newCol].get(newRow);
+            size_t newCol = newTable.column_mapping[cid];
+            void *dest = newTable.components[newCol].get(newRow);
 
             if (initialValue != nullptr) {
                 std::memcpy(dest, initialValue, sizeof(T));
@@ -300,6 +275,7 @@ struct Manager {
         record.archetype = nextArchtype;
         record.row = newRow;
     }
+
     template <typename... Ts> void addComponents(EntityId entity, const Ts *...initialValues) {
         static_assert(sizeof...(Ts) > 0, "Must add at least one component.");
 
@@ -327,10 +303,8 @@ struct Manager {
                     if constexpr (!std::is_empty_v<Ts>) {
                         if (initialValues != nullptr) {
                             ComponentId cid = ComponentID<Ts>::_id;
-                            size_t col = nextArchtype->dataTable->column_mapping[cid];
-
-                            void *dest = nextArchtype->dataTable->components[col].get(record.row);
-
+                            size_t col = nextArchtype->dataTable.column_mapping[cid];
+                            void *dest = nextArchtype->dataTable.components[col].get(record.row);
                             std::memcpy(dest, initialValues, sizeof(Ts));
                         }
                     }
@@ -339,73 +313,60 @@ struct Manager {
             return;
         }
 
-        if (currentArchtype != nullptr) {
-            removeEntityFromArchetype(currentArchtype, entity);
-        }
+        size_t newRow = nextArchtype->entities.size();
         nextArchtype->entities.push_back(entity);
 
-        Table *oldTable = currentArchtype ? currentArchtype->dataTable : nullptr;
-        Table *newTable = nextArchtype->dataTable;
-
-        if (oldTable == newTable) {
-            record.archetype = nextArchtype;
-            return;
+        Table &newTable = nextArchtype->dataTable;
+        for (ComponentId cid : newTable.componentIds) {
+            size_t col = newTable.column_mapping[cid];
+            newTable.components[col].push_back();
         }
 
-        size_t newRow = newTable->tableEntities.size();
-        newTable->tableEntities.push_back(entity);
-
-        for (ComponentId cid : newTable->componentIds) {
-            size_t col = newTable->column_mapping[cid];
-            newTable->components[col].push_back();
-        }
-
-        if (oldTable != nullptr) {
+        if (currentArchtype != nullptr) {
             size_t oldRow = record.row;
+            Table &oldTable = currentArchtype->dataTable;
 
-            for (ComponentId cid : oldTable->componentIds) {
-                if (!newTable->signature.test(cid))
+            for (ComponentId cid : oldTable.componentIds) {
+                if (!nextArchtype->typeSet.test(cid))
                     continue;
 
-                size_t oldCol = oldTable->column_mapping[cid];
-                size_t newCol = newTable->column_mapping[cid];
+                size_t oldCol = oldTable.column_mapping[cid];
+                size_t newCol = newTable.column_mapping[cid];
 
-                void *dest = newTable->components[newCol].get(newRow);
-                void *src = oldTable->components[oldCol].get(oldRow);
+                void *dest = newTable.components[newCol].get(newRow);
+                void *src = oldTable.components[oldCol].get(oldRow);
 
                 std::memcpy(dest, src, component_size[cid]);
             }
 
-            size_t lastRow = oldTable->tableEntities.size() - 1;
-            EntityId lastEntity = oldTable->tableEntities.back();
+            size_t lastRow = currentArchtype->entities.size() - 1;
+            EntityId lastEntity = currentArchtype->entities.back();
 
             if (oldRow != lastRow) {
-                for (ComponentId cid : oldTable->componentIds) {
-                    size_t col = oldTable->column_mapping[cid];
+                currentArchtype->entities[oldRow] = lastEntity;
+                entity_index[getEntityIndex(lastEntity)].row = oldRow;
 
-                    void *hole_dest = oldTable->components[col].get(oldRow);
-                    void *last_src = oldTable->components[col].get(lastRow);
-
-                    std::memcpy(hole_dest, last_src, component_size[cid]);
+                for (ComponentId cid : oldTable.componentIds) {
+                    size_t col = oldTable.column_mapping[cid];
+                    void *dest = oldTable.components[col].get(oldRow);
+                    void *src = oldTable.components[col].get(lastRow);
+                    std::memcpy(dest, src, component_size[cid]);
                 }
-                uint32_t lastEntityIdx = getEntityIndex(lastEntity);
-                entity_index[lastEntityIdx].row = oldRow;
-                oldTable->tableEntities[oldRow] = lastEntity;
             }
 
-            for (ComponentId cid : oldTable->componentIds) {
-                size_t col = oldTable->column_mapping[cid];
-                oldTable->components[col].pop_back();
+            currentArchtype->entities.pop_back();
+            for (ComponentId cid : oldTable.componentIds) {
+                size_t col = oldTable.column_mapping[cid];
+                oldTable.components[col].pop_back();
             }
-            oldTable->tableEntities.pop_back();
         }
 
         (
             [&]() {
                 if constexpr (!std::is_empty_v<Ts>) {
                     ComponentId cid = ComponentID<Ts>::_id;
-                    size_t newCol = newTable->column_mapping[cid];
-                    void *dest = newTable->components[newCol].get(newRow);
+                    size_t newCol = newTable.column_mapping[cid];
+                    void *dest = newTable.components[newCol].get(newRow);
 
                     if (initialValues != nullptr) {
                         std::memcpy(dest, initialValues, sizeof(Ts));
@@ -443,83 +404,70 @@ struct Manager {
         Archetype *nextArchtype = nullptr;
         ArchetypeEdge &edge = currentArchtype->edges[component];
 
-        if (edge.remove != nullptr) {
-            nextArchtype = edge.remove;
+        if (edge.remove != 0) {
+            nextArchtype = archetypeIdIndex[edge.remove];
         } else {
             ArchSignature_t newSignature = currentArchtype->typeSet;
             newSignature.reset(component);
 
             if (newSignature.any()) {
                 nextArchtype = getOrCreateArchetype(newSignature);
-                edge.remove = nextArchtype;
-                nextArchtype->edges[component].add = currentArchtype;
+                edge.remove = nextArchtype->id;
+                nextArchtype->edges[component].add = currentArchtype->id;
             }
         }
 
-        removeEntityFromArchetype(currentArchtype, entity);
-        if (nextArchtype)
-            nextArchtype->entities.push_back(entity);
-
-        Table *oldTable = currentArchtype->dataTable;
-        Table *newTable = nextArchtype ? nextArchtype->dataTable : nullptr;
-
-        if (oldTable == newTable) {
-            record.archetype = nextArchtype;
+        if (currentArchtype == nextArchtype)
             return;
-        }
-
-        size_t newRow = 0;
-
-        if (newTable != nullptr) {
-            newRow = newTable->tableEntities.size();
-            newTable->tableEntities.push_back(entity);
-
-            for (ComponentId cid : newTable->componentIds) {
-                size_t col = newTable->column_mapping[cid];
-                newTable->components[col].push_back();
-            }
-        }
 
         size_t oldRow = record.row;
+        Table &oldTable = currentArchtype->dataTable;
+        size_t newRow = 0;
 
-        if (newTable != nullptr) {
-            for (ComponentId cid : oldTable->componentIds) {
-                if (!newTable->signature.test(cid))
+        if (nextArchtype != nullptr) {
+            newRow = nextArchtype->entities.size();
+            nextArchtype->entities.push_back(entity);
+
+            Table &newTable = nextArchtype->dataTable;
+            for (ComponentId cid : newTable.componentIds) {
+                size_t col = newTable.column_mapping[cid];
+                newTable.components[col].push_back();
+            }
+
+            for (ComponentId cid : oldTable.componentIds) {
+                if (!nextArchtype->typeSet.test(cid))
                     continue;
 
-                size_t oldCol = oldTable->column_mapping[cid];
-                size_t newCol = newTable->column_mapping[cid];
+                size_t oldCol = oldTable.column_mapping[cid];
+                size_t newCol = newTable.column_mapping[cid];
 
-                void *dest = newTable->components[newCol].get(newRow);
-                void *src = oldTable->components[oldCol].get(oldRow);
+                void *dest = newTable.components[newCol].get(newRow);
+                void *src = oldTable.components[oldCol].get(oldRow);
 
                 std::memcpy(dest, src, component_size[cid]);
             }
         }
 
-        size_t lastRow = oldTable->tableEntities.size() - 1;
-        EntityId lastEntity = oldTable->tableEntities.back();
+        size_t lastRow = currentArchtype->entities.size() - 1;
+        EntityId lastEntity = currentArchtype->entities.back();
 
         if (oldRow != lastRow) {
-            for (ComponentId cid : oldTable->componentIds) {
-                size_t col = oldTable->column_mapping[cid];
+            currentArchtype->entities[oldRow] = lastEntity;
+            entity_index[getEntityIndex(lastEntity)].row = oldRow;
 
-                void *hole_dest = oldTable->components[col].get(oldRow);
-                void *last_src = oldTable->components[col].get(lastRow);
-
-                std::memcpy(hole_dest, last_src, component_size[cid]);
+            for (ComponentId cid : oldTable.componentIds) {
+                size_t col = oldTable.column_mapping[cid];
+                void *dest = oldTable.components[col].get(oldRow);
+                void *src = oldTable.components[col].get(lastRow);
+                std::memcpy(dest, src, component_size[cid]);
             }
-
-            uint32_t lastEntityIdx = getEntityIndex(lastEntity);
-            entity_index[lastEntityIdx].row = oldRow;
-            oldTable->tableEntities[oldRow] = lastEntity;
         }
 
-        for (ComponentId cid : oldTable->componentIds) {
-            size_t col = oldTable->column_mapping[cid];
-            oldTable->components[col].pop_back();
+        currentArchtype->entities.pop_back();
+        for (ComponentId cid : oldTable.componentIds) {
+            size_t col = oldTable.column_mapping[cid];
+            oldTable.components[col].pop_back();
         }
-        oldTable->tableEntities.pop_back();
 
         record.archetype = nextArchtype;
         record.row = newRow;
@@ -592,20 +540,19 @@ struct Manager {
         const auto &queriedArchetypes = queryArchtypes<Components...>();
 
         for (auto arch : queriedArchetypes) {
-            Table *table = arch->dataTable;
+            Table &table = arch->dataTable;
 
-            if (!table || table->tableEntities.empty() || table->components.empty())
+            if (arch->entities.empty())
                 continue;
 
-            size_t total_entities = table->tableEntities.size();
+            size_t total_entities = arch->entities.size();
             size_t total_pages = (total_entities + PagedColumn::ENTITIES_PER_PAGE - 1) /
                                  PagedColumn::ENTITIES_PER_PAGE;
 
             auto columns = std::make_tuple(
-                &table->components[table->column_mapping[ComponentID<Filtered>::_id]]...);
+                &table.components[table.column_mapping[ComponentID<Filtered>::_id]]...);
 
             if constexpr (Policy == Exec::Par) {
-                // --- PARALLEL BATCHING ---
                 size_t num_threads = threadPool.getThreadCount();
                 size_t pages_per_batch = (total_pages + num_threads - 1) / num_threads;
 
@@ -616,14 +563,14 @@ struct Manager {
                     size_t end_page = std::min(start_page + pages_per_batch, total_pages);
 
                     threadPool.enqueue(
-                        [start_page, end_page, total_entities, table, columns, &systemFunction]() {
+                        [start_page, end_page, total_entities, arch, columns, &systemFunction]() {
                             for (size_t p = start_page; p < end_page; ++p) {
                                 size_t count =
                                     total_entities - (p * PagedColumn::ENTITIES_PER_PAGE);
                                 if (count > PagedColumn::ENTITIES_PER_PAGE)
                                     count = PagedColumn::ENTITIES_PER_PAGE;
 
-                                const EntityId *entity_array = table->tableEntities.data() +
+                                const EntityId *entity_array = arch->entities.data() +
                                                                (p * PagedColumn::ENTITIES_PER_PAGE);
 
                                 std::apply(
@@ -644,14 +591,13 @@ struct Manager {
                 threadPool.wait_for_all();
 
             } else {
-                // --- SEQUENTIAL EXECUTION ---
                 for (size_t p = 0; p < total_pages; ++p) {
                     size_t count = total_entities - (p * PagedColumn::ENTITIES_PER_PAGE);
                     if (count > PagedColumn::ENTITIES_PER_PAGE)
                         count = PagedColumn::ENTITIES_PER_PAGE;
 
                     const EntityId *entity_array =
-                        table->tableEntities.data() + (p * PagedColumn::ENTITIES_PER_PAGE);
+                        arch->entities.data() + (p * PagedColumn::ENTITIES_PER_PAGE);
 
                     std::apply(
                         [&](auto *...col) {
@@ -675,20 +621,19 @@ struct Manager {
         const auto &queriedArchetypes = queryArchtypes<Components...>();
 
         for (auto arch : queriedArchetypes) {
-            Table *table = arch->dataTable;
+            Table &table = arch->dataTable;
 
-            if (!table || table->tableEntities.empty() || table->components.empty())
+            if (arch->entities.empty())
                 continue;
 
-            size_t total_entities = table->tableEntities.size();
+            size_t total_entities = arch->entities.size();
             size_t total_pages = (total_entities + PagedColumn::ENTITIES_PER_PAGE - 1) /
                                  PagedColumn::ENTITIES_PER_PAGE;
 
             auto columns = std::make_tuple(
-                &table->components[table->column_mapping[ComponentID<Filtered>::_id]]...);
+                &table.components[table.column_mapping[ComponentID<Filtered>::_id]]...);
 
             if constexpr (Policy == Exec::Par) {
-                // --- PARALLEL BATCHING ---
                 size_t num_threads = threadPool.getThreadCount();
                 size_t pages_per_batch = (total_pages + num_threads - 1) / num_threads;
 
@@ -700,7 +645,7 @@ struct Manager {
                     size_t end_page = std::min(start_page + pages_per_batch, total_pages);
 
                     threadPool.enqueue(
-                        [start_page, end_page, total_entities, table, columns, &systemFunction]() {
+                        [start_page, end_page, total_entities, columns, &systemFunction]() {
                             for (size_t p = start_page; p < end_page; ++p) {
                                 size_t count =
                                     total_entities - (p * PagedColumn::ENTITIES_PER_PAGE);
@@ -725,7 +670,6 @@ struct Manager {
                 threadPool.wait_for_all();
 
             } else {
-                // --- SEQUENTIAL EXECUTION ---
                 for (size_t p = 0; p < total_pages; ++p) {
                     size_t count = total_entities - (p * PagedColumn::ENTITIES_PER_PAGE);
                     if (count > PagedColumn::ENTITIES_PER_PAGE)
@@ -746,38 +690,6 @@ struct Manager {
         }
     }
 
-    void removeEntityFromArchetype(Archetype *arch, EntityId entity) {
-        auto it = std::find(arch->entities.begin(), arch->entities.end(), entity);
-        if (it != arch->entities.end()) {
-            *it = arch->entities.back();
-            arch->entities.pop_back();
-        }
-    }
-
-    Table *getOrCreateTable(const TableSignature_t &signature) {
-        auto it = table_index.find(signature);
-        if (it != table_index.end())
-            return &it->second;
-
-        TableID newId = tableIdCount++;
-        auto [insertedIt, success] = table_index.try_emplace(signature, Table{newId});
-        Table &newTable = insertedIt->second;
-
-        newTable.signature = signature;
-        tableIdIndex[newId] = &newTable;
-
-        size_t col = 0;
-        for (size_t i = 0; i < MAX_COMPONENTS; ++i) {
-            if (signature.test(i) && component_size[i] > 0) {
-                newTable.componentIds.push_back(i);
-                newTable.column_mapping[i] = col++;
-
-                newTable.components.emplace_back(component_size[i]);
-            }
-        }
-        return &newTable;
-    }
-
     Archetype *getOrCreateArchetype(const ArchSignature_t &signature) {
         auto archIt = archetype_index.find(signature);
         if (archIt != archetype_index.end())
@@ -788,10 +700,20 @@ struct Manager {
         Archetype &newArchtype = insertedIt->second;
 
         newArchtype.typeSet = signature;
-        archetypeIdIndex[newId] = &newArchtype;
+        archetypeIdIndex.push_back(&newArchtype);
 
         newArchtype.trueComponentCount = signature.count();
-        newArchtype.dataTable = getOrCreateTable(signature);
+
+        Table& newTable = newArchtype.dataTable;
+        size_t col = 0;
+        
+        for (size_t i = 0; i < MAX_COMPONENTS; ++i) {
+            if (signature.test(i) && component_size[i] > 0) {
+                newTable.componentIds.push_back(i);
+                newTable.column_mapping[i] = col++;
+                newTable.components.emplace_back(component_size[i]);
+            }
+        }
 
         for (auto &[querySignature, matchedCache] : query_cache) {
             if ((signature & querySignature) == querySignature) {

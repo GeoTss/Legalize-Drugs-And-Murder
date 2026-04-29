@@ -2,34 +2,29 @@
 #define ARCHETYPE_HPP
 #pragma once
 
-#include "ComponentFamily.hpp"
-#include "Entity.hpp"
-#include "Table.hpp"
-
-#include <cstddef>
-#include <ostream>
-#include <unordered_map>
+#include <array>
 #include <vector>
-#include <bitset>
+#include <ostream>
 
-using ArchetypeId = std::uint16_t;
+#include "ComponentFamily.hpp"
+#include "Table.hpp"
+#include "Entity.hpp"
 
 using ArchSignature_t = std::bitset<MAX_COMPONENTS>;
-
-struct Archetype;
+using ArchetypeId = std::uint32_t;
 
 struct ArchetypeEdge {
-    Archetype *add = nullptr;
-    Archetype *remove = nullptr;
+    ArchetypeId add = 0;
+    ArchetypeId remove = 0;
 };
 
-// For components + tags representation
+// Just for component representaion
 struct Archetype {
 
     std::array<ArchetypeEdge, MAX_COMPONENTS> edges;
     ArchSignature_t typeSet;
     
-    Table* dataTable;
+    Table dataTable;
 
     std::vector<EntityId> entities;
 
@@ -37,11 +32,12 @@ struct Archetype {
     uint16_t trueComponentCount;
 
     Archetype() = default;
-    Archetype(ArchetypeId _id) : id{_id} {}
+    Archetype(ArchetypeId _id) : id{_id}, trueComponentCount{0} {}
 
     friend std::ostream &operator<<(std::ostream &os, const Archetype &arch) {
+        os << "Archetype ID: " << arch.id << '\n';
         os << "Entity count: " << arch.entities.size() << '\n';
-
+        os << arch.dataTable;
         return os;
     }
 };
