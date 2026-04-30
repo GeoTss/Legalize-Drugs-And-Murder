@@ -8,7 +8,7 @@
 
 namespace GameSystems {
 
-void updateCamera(Camera2D &camera, const TransformComponent *transform) {
+void updateCamera(Camera2D &camera, const TransformComponent *transform) noexcept {
     float halfScreenW = (800.0f / 2.0f) / camera.zoom;
     float halfScreenH = (600.0f / 2.0f) / camera.zoom;
     camera.target.x =
@@ -18,7 +18,6 @@ void updateCamera(Camera2D &camera, const TransformComponent *transform) {
 }
 
 void UpdateInput(Manager &manager) {
-
     manager.runSystem<PlayerInput>([](EntityId entity, PlayerInput &input) {
         input = {0};
         if (IsKeyDown(KEY_W))
@@ -34,9 +33,7 @@ void UpdateInput(Manager &manager) {
     });
 }
 
-void UpdatePlayerLogic(Manager &manager, float dt) {
-    DeferredCommandBuffer cmd(manager);
-
+void UpdatePlayerLogic(Manager &manager, DeferredCommandBuffer &cmd, float dt) {
     manager.runSystem<StateComponent, AttackingStateTag, AnimationCompleteTag>(
         [&manager, &cmd](EntityId entity, StateComponent &state) {
             state.stateID = (uint8_t)hunterStates::IDLE;
@@ -132,13 +129,9 @@ void UpdatePlayerLogic(Manager &manager, float dt) {
                 transform.facingDirection = 1;
             }
         });
-
-    cmd.execute();
 }
 
-void UpdateEnemyLogic(Manager &manager, float dt, Vector2 playerPos) {
-    DeferredCommandBuffer cmd(manager);
-
+void UpdateEnemyLogic(Manager &manager, DeferredCommandBuffer &cmd, float dt, Vector2 playerPos) {
     manager.runSystem<TransformComponent, StateComponent, StatsComponent, EnemyTag>(
         [playerPos, dt, &manager, &cmd](EntityId entity,
                                         TransformComponent &transform,
@@ -149,11 +142,11 @@ void UpdateEnemyLogic(Manager &manager, float dt, Vector2 playerPos) {
                 return;
             }
 
-            float aggroRadius = 400.0f;
-            float attackRange = 50.0f;
-            float dx = playerPos.x - transform.pos.x;
-            float dy = playerPos.y - 40.f - transform.pos.y;
-            float distance = std::sqrt(dx * dx + dy * dy);
+            const float aggroRadius = 400.0f;
+            const float attackRange = 50.0f;
+            const float dx = playerPos.x - transform.pos.x;
+            const float dy = playerPos.y - 40.f - transform.pos.y;
+            const float distance = std::sqrt(dx * dx + dy * dy);
 
             uint8_t targetState = (uint8_t)enemyStates::IDLE;
 
@@ -195,14 +188,12 @@ void UpdateEnemyLogic(Manager &manager, float dt, Vector2 playerPos) {
 
                 state.stateID = targetState;
                 auto anim = manager.getComponent<AnimationStateComponent>(entity);
-                if (anim != nullptr) {
+                if (anim) {
                     anim->currentFrame = 0;
                     anim->stateTimer = 0.0f;
                 }
             }
         });
-
-    cmd.execute();
 }
 
 template <typename... EventTags, typename Func>
@@ -214,10 +205,9 @@ void updateEvents(Manager &manager, const Func &&callback) {
 }
 
 void UpdateCombatAndHitboxes(Manager &manager,
+                             DeferredCommandBuffer &cmd,
                              float dt,
                              std::chrono::steady_clock::time_point nowTime) {
-    DeferredCommandBuffer cmd(manager);
-
     updateEvents<SpawnHitboxEvent>(
         manager, [&cmd, nowTime](Manager &m, const EntityId eventEntity) {
             auto eventInfo = m.getComponent<AnimationEventComponent>(eventEntity);
@@ -269,11 +259,11 @@ void UpdateCombatAndHitboxes(Manager &manager,
 
             for (auto enemy : enemyView) {
                 auto enemyTransform = manager.getComponent<TransformComponent>(enemy);
-                if (enemyTransform == nullptr)
+                if (!enemyTransform)
                     continue;
 
-                float actualBodyWidth = 40.0f;
-                float actualBodyHeight = 40.0f;
+                const float actualBodyWidth = 40.0f;
+                const float actualBodyHeight = 40.0f;
 
                 float enemyLeft = enemyTransform->pos.x - (actualBodyWidth / 2.0f);
                 float enemyRight = enemyTransform->pos.x + (actualBodyWidth / 2.0f);
@@ -297,14 +287,11 @@ void UpdateCombatAndHitboxes(Manager &manager,
                         state->stateID = (uint8_t)enemyStates::DAMAGED;
 
                     auto enemyHealth = manager.getComponent<HealthComponent>(enemy);
-                    if (enemyHealth != nullptr) {
+                    if (enemyHealth)
                         enemyHealth->health -= hitbox.damage;
-                    }
                 }
             }
         });
-
-    cmd.execute();
 }
 
 void Render(Manager &manager, Camera2D &camera, Texture2D water, Texture2D tileset) {
@@ -343,9 +330,7 @@ void Render(Manager &manager, Camera2D &camera, Texture2D water, Texture2D tiles
     EndDrawing();
 }
 
-void Cleanup(Manager &manager, float dt) {
-    DeferredCommandBuffer cmd(manager);
-
+void Cleanup(Manager &manager, DeferredCommandBuffer &cmd, float dt) {
     manager.runSystem<HealthComponent>([&cmd](EntityId entity, HealthComponent &healthComp) {
         if (healthComp.health <= 0.f)
             cmd.destroyEntity(entity);
@@ -361,7 +346,5 @@ void Cleanup(Manager &manager, float dt) {
         [&cmd](EntityId eventEntity, AnimationEventComponent &eventComp) {
             cmd.destroyEntity(eventEntity);
         });
-
-    cmd.execute();
 }
 } // namespace GameSystems

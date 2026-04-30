@@ -46,6 +46,8 @@ int main() {
     Camera2D camera = {0};
     camera.offset = {800.0f / 2.0f, 600.0f / 2.0f};
     camera.zoom = 1.0f;
+    
+    DeferredCommandBuffer cmd(manager);
 
     while (!WindowShouldClose()) {
         float dt = GetFrameTime();
@@ -57,17 +59,19 @@ int main() {
         }
 
         GameSystems::UpdateInput(manager);
-        GameSystems::UpdatePlayerLogic(manager, dt);
+        GameSystems::UpdatePlayerLogic(manager, cmd, dt);
 
         if (hunterTransform) {
-            GameSystems::UpdateEnemyLogic(manager, dt, hunterTransform->pos);
+            GameSystems::UpdateEnemyLogic(manager, cmd, dt, hunterTransform->pos);
         }
         AnimationSystem::update(manager, spriteManager, eventDispatcher, dt);
-        GameSystems::UpdateCombatAndHitboxes(manager, dt, nowTime);
+        GameSystems::UpdateCombatAndHitboxes(manager, cmd, dt, nowTime);
+        
+        cmd.execute();
 
         GameSystems::Render(manager, camera, waterTexture, tilesetTexture);
 
-        GameSystems::Cleanup(manager, dt);
+        GameSystems::Cleanup(manager, cmd, dt);
     }
 
     CloseWindow();
