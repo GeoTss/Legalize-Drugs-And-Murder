@@ -12,7 +12,6 @@ private:
     float fade(float t) { return t * t * t * (t * (t * 6.0f - 15.0f) + 10.0f); }
     float lerp(float t, float a, float b) { return a + t * (b - a); }
     
-    // Bulletproof 2D gradient mapping
     float grad(int hash, float x, float y) {
         switch(hash & 3) {
             case 0: return x + y;

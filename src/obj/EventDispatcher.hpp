@@ -9,7 +9,7 @@
 
 #include "ECS/Manager.hpp"
 #include "ECS/Component.hpp"
-#include "ECS/CommandBuffer.hpp" // <-- Include the Command Buffer
+#include "ECS/CommandBuffer.hpp"
 
 struct EventDispatcher {
     std::unordered_map<uint64_t, std::function<void(DeferredCommandBuffer &, const EntityId, const EntityId)>> eventMap;

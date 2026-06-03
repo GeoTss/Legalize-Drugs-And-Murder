@@ -20,24 +20,23 @@ int main() {
 #endif
 
     InitWindow(800, 600, "My ECS Game");
+    // InitAudioDevice();
     SetTargetFPS(120);
+
+    // Music music = LoadMusicStream(ASSET_PATH "/music/Unshaken  The Music of Red Dead Redemption 2 OST.mp3");
+    // PlayMusicStream(music);
 
     Manager manager;
     SpriteManager spriteManager;
     EventDispatcher eventDispatcher;
 
-    // Initialization
     initializeCharacterAnimations(spriteManager, eventDispatcher);
     initializeEnemyAnimations(spriteManager, eventDispatcher);
 
     EntityId hunter = spawnPlayer(manager, spriteManager);
-    for (int i = 0; i < 10; ++i) {
-        EntityId enemy = spawnEnemy(manager, spriteManager, rand() % 700 + 500, rand() % 100 + 10);
-    }
 
     loadMap(manager, 1572);
 
-    
     Texture2D tilesetTexture =
         LoadTexture(ASSET_PATH "/Tiny Swords (Free Pack)/Terrain/Tileset/Tilemap_color5.png");
     Texture2D waterTexture = LoadTexture(
@@ -46,27 +45,33 @@ int main() {
     Camera2D camera = {0};
     camera.offset = {800.0f / 2.0f, 600.0f / 2.0f};
     camera.zoom = 1.0f;
-    
+
     DeferredCommandBuffer cmd(manager);
 
     while (!WindowShouldClose()) {
+        // UpdateMusicStream(music);
         float dt = GetFrameTime();
         auto nowTime = std::chrono::steady_clock::now();
 
         auto hunterTransform = manager.getComponent<TransformComponent>(hunter);
         if (hunterTransform) {
             GameSystems::updateCamera(camera, hunterTransform);
+            GameSystems::UpdateSpawning(manager, spriteManager, dt, hunterTransform->pos);
         }
 
         GameSystems::UpdateInput(manager);
+        GameSystems::UpdateAttributeCollisions(manager, cmd, hunter);
+        GameSystems::UpdateAttributeModifiers(manager);
         GameSystems::UpdatePlayerLogic(manager, cmd, dt);
+        GameSystems::UpdateProjectiles(manager, cmd, dt);
+        GameSystems::UpdateElectricPath(manager, cmd, dt);
 
         if (hunterTransform) {
             GameSystems::UpdateEnemyLogic(manager, cmd, dt, hunterTransform->pos);
         }
         AnimationSystem::update(manager, spriteManager, eventDispatcher, dt);
         GameSystems::UpdateCombatAndHitboxes(manager, cmd, dt, nowTime);
-        
+
         cmd.execute();
 
         GameSystems::Render(manager, camera, waterTexture, tilesetTexture);
@@ -74,6 +79,8 @@ int main() {
         GameSystems::Cleanup(manager, cmd, dt);
     }
 
+    // UnloadMusicStream(music);
+    CloseAudioDevice();
     CloseWindow();
     return 0;
 }
